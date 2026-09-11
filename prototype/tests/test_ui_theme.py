@@ -34,9 +34,14 @@ app.update()
 app.update_idletasks()
 heights = {k: {w.winfo_reqheight() for w in ws} for k, ws in rows.items()}
 print("按钮高度:", {k: sorted(v) for k, v in heights.items()})
-assert heights["standard"] == heights["primary"] == {38}, heights
-assert heights["chip"] == heights["ghost"] == {28}, heights
-assert heights["standard"] != heights["chip"], "标准与紧凑两档要分得开"
+# 只断言"同档一致 + 两档分得开"，不写死像素：不同字体/DPI 下度量会变（CI 上曾因此误报）
+assert len(heights["standard"]) == 1, f"标准按钮高度应一致：{heights['standard']}"
+assert heights["standard"] == heights["primary"], "主按钮应与标准按钮同高"
+assert len(heights["chip"]) == 1 and len(heights["ghost"]) == 1
+assert heights["chip"] == heights["ghost"], "紧凑两档应同高"
+assert max(heights["standard"]) - max(heights["chip"]) >= 5, \
+    f"标准档应明显高于紧凑档：{heights}"
+assert 30 <= max(heights["standard"]) <= 46, heights["standard"]
 for ws in rows.values():
     for w in ws:
         w.destroy()
@@ -50,7 +55,9 @@ for w in fields:
 app.update()
 fh = [w.winfo_reqheight() for w in fields]
 print("输入域高度:", fh)
-assert len(set(fh)) == 1 and fh[0] == 36, f"输入域高度应统一为 36：{fh}"
+# 同样不写死像素：只要求"三者一致"且在合理区间（CI 字体不同不影响这个结论）
+assert len(set(fh)) == 1, f"输入域高度应统一：{fh}"
+assert 28 <= fh[0] <= 46, fh
 for w in fields:
     w.destroy()
 
@@ -58,7 +65,7 @@ for w in fields:
 app.nb.select(1)
 app.update()
 assert isinstance(app.spk_max, ttk.Combobox), type(app.spk_max)
-assert app.spk_max.winfo_reqheight() >= 36, app.spk_max.winfo_reqheight()
+assert app.spk_max.winfo_reqheight() >= 28, app.spk_max.winfo_reqheight()
 assert isinstance(app.spk_th, ttk.Scale), type(app.spk_th)
 assert app.spk_th.winfo_reqwidth() >= 150, app.spk_th.winfo_reqwidth()
 print(f"声纹控件：阈值滑块 {app.spk_th.winfo_reqwidth()}px、"

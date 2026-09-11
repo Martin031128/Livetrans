@@ -50,8 +50,19 @@ for t in "$HERE"/test_*.py; do
         echo "FAIL (exit $code)"
         echo "$out" | tail -8
         fail=1
+        # 在 GitHub Actions 里额外打一条注解：失败原因能直接在 API/Run 页面读到
+        # （日志本身要登录才能拉，注解是公开可读的，方便定位）
+        if [ -n "${GITHUB_ACTIONS:-}" ]; then
+            msg="$(echo "$out" | tail -15 | sed 's/%/%25/g; s/\r//g' | paste -sd'|' - \
+                   | sed 's/|/%0A/g; s/::/\\:\\:/g')"
+            echo "::error title=测试失败 ${name%.py}::${msg}"
+        fi
     fi
 done
+
+if [ -n "${GITHUB_ACTIONS:-}" ] && [ "$fail" != "0" ]; then
+    echo "::error title=测试套件失败::selfcheck 或专项测试未全部通过，见上方 FAIL 行"
+fi
 
 echo
 if [ $fail -eq 0 ]; then
