@@ -7,7 +7,8 @@ on:
   workflow_dispatch:            # 也能在 Actions 页面手动点 "Run workflow"
 
 jobs:
-  selfcheck:
+  # Linux 版：自检 + 全部专项测试（xvfb 提供虚拟显示）
+  linux:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -20,7 +21,23 @@ jobs:
       - name: Python 依赖
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install -r prototype/requirements.txt
+          python3 -m pip install -r platforms/linux/requirements.txt
       - name: 自检 + 全部专项测试（xvfb 提供虚拟显示）
-        working-directory: prototype
+        working-directory: platforms/linux
         run: xvfb-run -a bash tests/run.sh
+
+  # Windows 版：自检 + 专项测试（GUI 类用例依赖虚拟显示，暂由测试内部自行跳过）
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python 依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r platforms/windows/requirements.txt
+      - name: 自检 + 全部专项测试
+        working-directory: platforms/windows
+        run: python tests/run.py

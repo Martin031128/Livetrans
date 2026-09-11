@@ -7,6 +7,22 @@
 >
 > 本文件是开发交接材料，不随安装包发布。
 
+> **⚠ 现状更新（2026-09-11）：本文档的部分前提已改变，请先读这段。**
+>
+> 仓库已按"两个平台平级"的方案完成分叉，**不再是"从 Linux 目录移植到另一个目录"**：
+> - `platforms/linux/` —— Linux 版，**冻结为稳定基线**，不再主动变更。
+> - `platforms/windows/` —— Windows 版，**已由 Linux 版复制并独立演进**（等价于下文"复制到新目录"）。
+> - 本文档中 `prototype/` 的路径已全部改写为 `platforms/linux/`；凡提到"新建目录/复制"
+>   的步骤**已经完成**，无需重复。
+>
+> W0 骨架已完成并验证（详见 TECH_ROADMAP 开发日志"（八）"）。当前 Windows 版实测状态：
+> 自检 10/10 通过；`sysmon.py`（→psutil）、`paths.py`（→platformdirs）已改造；
+> `SessionMirror` 已抽为独立 `mirror.py`。**待办：W1 麦克风链路、W2 WASAPI loopback、
+> W3 Qt 重写 overlay（`capture.py` / `overlay.py` 仍是 Linux 实现）。**
+>
+> 另：下文"平台抽象层 `plat/`"方案**经评估暂缓**——两个平台已是独立目录、各自维护，
+> 强行抽象反而增加跨文件改动成本；待 Windows 侧跑通后再视需要决定。
+
 ---
 
 # 第一部分：直接复制给 AI 的提示词
@@ -22,13 +38,13 @@
 我确认后你再动手：
 - README.md                    项目功能与用法
 - TECH_ROADMAP.md              架构决策与逐次改动日志（信息量最大，务必读）
-- prototype/requirements.txt   依赖清单（含系统依赖说明）
-- prototype/livetrans/capture.py    音频捕获（Linux 用 parec 抓系统声音）
-- prototype/livetrans/overlay.py    字幕外挂窗（GTK3，1111 行，平台耦合最重）
-- prototype/livetrans/sysmon.py     资源监控（读 /proc）
-- prototype/livetrans/paths.py      数据目录（XDG）
-- prototype/livetrans/deps.py       依赖自检（apt 提示）
-- prototype/tests/run.sh            测试入口
+- platforms/linux/requirements.txt   依赖清单（含系统依赖说明）
+- platforms/linux/livetrans/capture.py    音频捕获（Linux 用 parec 抓系统声音）
+- platforms/linux/livetrans/overlay.py    字幕外挂窗（GTK3，平台耦合最重）
+- platforms/linux/livetrans/sysmon.py     资源监控（读 /proc）
+- platforms/linux/livetrans/paths.py      数据目录（XDG）
+- platforms/linux/livetrans/deps.py       依赖自检（apt 提示）
+- platforms/linux/tests/run.sh            测试入口
 
 ## 项目是什么
 Linux 桌面**实时语音翻译字幕**工具：
@@ -113,7 +129,7 @@ Linux 桌面**实时语音翻译字幕**工具：
 不要让 Windows 代码散落在业务逻辑里，抽一层：
 
 ```
-prototype/livetrans/plat/
+platforms/windows/livetrans/plat/
     __init__.py    # 按 sys.platform 选择实现，对外只暴露统一函数
     base.py        # 接口定义 + 公共工具（如 resample 已在 capture.py 里）
     linux.py       # 把现在 capture.py / overlay 启动 / paths 的 Linux 实现搬进来（行为不变）
@@ -251,7 +267,7 @@ prototype/livetrans/plat/
 ## 附：给 AI 的一句话开场（可直接用）
 
 > 这个项目是 Linux 上已完成并发布的实时语音翻译字幕工具，现在要移植到 Windows。
-> 请你先读完 `README.md`、`TECH_ROADMAP.md` 和 `prototype/` 下的代码，
+> 请你先读完 `README.md`、`TECH_ROADMAP.md` 和 `platforms/linux/` 下的代码，
 > 按 `WINDOWS_PORT_BRIEF.md` 的第二部分理解技术底账，
 > 然后**先给我一份移植方案**（改动清单 + 每步验证方式 + 风险），我确认后再动手。
 > 逐个里程碑推进，每步都要能运行、能测试，并且不要破坏 Linux 版。

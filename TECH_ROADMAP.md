@@ -1,10 +1,12 @@
 # LiveTrans 技术路线与现状
 
-> 当前形态：Linux 桌面的实时语音翻译工具（Python 3.10）——系统声音/麦克风 → 本地识别 → LLM 翻译
-> → 置顶双语字幕 / 悬浮外挂字幕。目标：Windows / Linux / Android 三端。
+> 实时语音翻译工具（Python）——系统声音/麦克风 → 本地识别 → LLM 翻译
+> → 置顶双语字幕 / 悬浮外挂字幕。
+> **Linux 与 Windows 两个平台平级、同步开发、共同发行**（Android 见里程碑）。
 
 ## 目录
 
+0. [平台布局与协作约定](#0-平台布局与协作约定)
 1. [功能现状](#1-功能现状)
 2. [系统架构与数据流](#2-系统架构与数据流)
 3. [技术选型决策记录](#3-技术选型决策记录)
@@ -14,6 +16,39 @@
 7. [待办与已知问题](#7-待办与已知问题)
 8. [附录：开发日志](#8-附录开发日志)
 9. [风险与备选](#9-风险与备选)
+
+---
+
+## 0. 平台布局与协作约定
+
+两个平台**各有一份完整实现**，代码互不干扰；共享的只有本文档、根 `README.md` 与发版流程。
+
+```
+platforms/
+├── linux/      Linux 版：Debian/Ubuntu 发行，GTK3 外挂，parec 抓系统声音，tests/run.sh
+└── windows/    Windows 版：便携 zip / 安装器，Qt 外挂，WASAPI loopback，tests/run.py
+```
+
+**协作约定（重要）：**
+
+1. **Linux 版已冻结为稳定基线**——功能与行为不再主动变更，只在修 bug 时小步改动。
+2. **Windows 版由 Linux 版复制而来**，在副本里独立演进；Windows 专属改动**只进 `platforms/windows/`**。
+3. **没有主次之分**：两个平台都是正式支持目标，发版时同时产出两者的安装包，挂在同一个 Release。
+4. **可共享的改动要两边都改**：修业务逻辑（识别/翻译/声纹/导出/配置等跨平台部分）的 bug 时，
+   应考虑是否同样适用于另一平台；有则两边都提交，并在日志里注明「双平台」。
+5. **平台差异处保持对照**（新增功能时两边都要有）：
+
+| 能力 | Linux | Windows |
+|---|---|---|
+| 系统声音 | PulseAudio/PipeWire monitor 源（`parec` 子进程） | WASAPI loopback（`soundcard`） |
+| 字幕外挂 | GTK3 + cairo + Pango（逐像素 alpha） | PySide6 / Qt6 |
+| 数据目录 | `$XDG_DATA_HOME/livetrans`（`paths.py`） | `%LOCALAPPDATA%\LiveTrans`（`platformdirs`） |
+| 资源监控 | 读 `/proc/stat`、`/proc/meminfo` | `psutil` |
+| 外部进程 | `start_new_session=True`、`SIGTERM` | `creationflags`、`KeyboardInterrupt` |
+| 打包 | `build_deb.sh` → `.deb` | `build_windows.py` → 便携 zip |
+| 测试入口 | `tests/run.sh`（bash + timeout） | `tests/run.py`（Python，跨平台） |
+
+> 统一的移植技术底账见 [WINDOWS_PORT_BRIEF.md](WINDOWS_PORT_BRIEF.md)（该文件为交接材料，不随包发布）。
 
 ---
 
@@ -101,42 +136,64 @@
 
 | 里程碑 | 目标 | 状态 |
 |--------|------|------|
-| M2 | Windows 支持（WASAPI / Process Loopback 按进程标注） | 未开始 |
+| M2 | **Windows 版**（WASAPI loopback / Qt 外挂 / 便携打包） | 🚧 进行中（仓内已分叉出 `platforms/windows/`） |
 | M3 | partial 增量字幕、上下文压缩、更多翻译后端 | 部分（流式 partial 已实现） |
 | M4 | 浏览器扩展（tabCapture + WebSocket）：标签页级来源标注 | 未开始 |
 | M5 | Rust + Tauri 正式版 + Android | 未开始 |
 | M6 | 打磨：打包分发、全局热键、开机自启、自动更新 | 部分（应用菜单、外挂样式已完成） |
 
+### Windows 版分步计划（M2 展开）
+
+每个阶段结束都要能运行、能自测；平台差异用例在非目标平台自动 `[SKIP]`。
+
+| 阶段 | 内容 | 验收 |
+|---|---|---|
+| W0 骨架 | 目录分叉（`platforms/linux` 冻结 + `platforms/windows` 复制）、CI 双 job、`tests/run.py`、`build_windows.py` | ✅ 两平台 CI 都能跑；Windows 侧 `python tests/run.py` 可用 |
+| W1 麦克风链路 | 装 pip 依赖 → 跑通自检 → 主字幕窗 + 识别 + 翻译 | ✅ 自检 10/10 通过；`AudioCapture` 跨平台可用（待真人说话验收） |
+| W2 系统声音 | WASAPI loopback（`soundcard`）实现「内部音频」，重采样到 16k 单声道 | ✅ 采集实测 4 源、时间轴 1.003、全链路合成人声验证通过 |
+| W3 字幕外挂 | PySide6 重写 overlay：逐像素透明 + 点击穿透 + 置顶 + 多屏 + DPI | ✅ Qt6 版完成，功能/视觉对齐 Linux 版；实跑字幕上屏成功 |
+| W4 全面回归 | 声纹 / 会话 / 导出 / 镜像 / 弱网降级全链路 | ✅ 声纹实测可用；专项测试 12 文件全绿 |
+| W5 打包发版 | PyInstaller one-dir → 便携 zip（+ 可选 Inno Setup 安装器） | ✅ 打包成功（621MB）、exe 冒烟与端到端通过 |
+
 ## 5. 目录结构（模块地图）
 
 ```
 translate/
-├── TECH_ROADMAP.md           # 本文件（现状 + 决策 + 开发日志）
-├── README.md                 # 快速开始 / 安装 / 配置 / 排障
-└── prototype/                # Linux 桌面（Python 3.10）
-    ├── launcher.py           # 控制台外壳（窗口骨架/装配/配置读写/启动控制，~490 行）
-    ├── selfcheck.py          # 自检脚本（6 项）
-    ├── diagnose.py           # 音频链路诊断脚本
-    ├── requirements.txt      # pip 依赖 + 系统包说明
-    ├── config.example.yaml / glossary.example.yaml
-    ├── install-desktop.sh / livetrans.desktop / livetrans-gui.sh
-    ├── assets/livetrans.svg
-    ├── models/               # sensevoice（本地识别模型，231MB）
-    ├── sessions/             # 会话 JSONL（每次启动一份）
-    └── livetrans/
-        ├── main.py           # 主程序入口与启动链
-        ├── overlay.py        # 字幕外挂（GTK3，900 行）
-        ├── subtitle.py       # 主字幕窗（Tkinter）
-        ├── asr.py            # VAD + SenseVoice + 模型下载
-        ├── capture.py        # 麦克风 / 系统声音采集
-        ├── translate.py      # LLM 翻译 / 总结 / 对话
-        ├── summarize.py      # 总结 CLI
-        ├── config.py         # 配置加载（YAML → dataclass）
-        ├── deps.py           # 运行依赖自检
-        ├── keys.py           # Key 存储 / 服务商识别 / 历史
-        ├── providers.py      # 服务商数据层（模型列表拉取）
-        ├── paths.py / langs.py / sysmon.py
-        └── ui/               # theme / widgets / page_* / key_ui / overlay_card
+├── TECH_ROADMAP.md           # 本文件（现状 + 决策 + 开发日志，双平台共用）
+├── README.md                 # 快速开始 / 安装 / 配置 / 排障（双平台共用）
+├── WINDOWS_PORT_BRIEF.md     # Windows 移植交接材料（不随包发布）
+├── .github/workflows/        # test.yml（linux + windows 两个 job）/ release.yml（同时出两平台产物）
+└── platforms/
+    ├── linux/                # Linux 版（稳定基线）
+    │   ├── launcher.py       # 控制台外壳（窗口骨架/装配/配置读写/启动控制）
+    │   ├── selfcheck.py      # 自检脚本
+    │   ├── diagnose.py       # 音频链路诊断脚本
+    │   ├── requirements.txt  # pip 依赖 + 系统包说明
+    │   ├── packaging/        # build_deb.sh / install.sh / installer_gui.py / livetrans.desktop
+    │   ├── install-desktop.sh / livetrans-gui.sh
+    │   ├── assets/livetrans.svg
+    │   ├── models/           # sensevoice + speaker（本地模型）
+    │   ├── sessions/         # 会话 JSONL（每次启动一份）
+    │   ├── tests/run.sh      # 测试入口（bash）
+    │   └── livetrans/
+    │       ├── main.py       # 主程序入口与启动链
+    │       ├── overlay.py    # 字幕外挂（GTK3）
+    │       ├── subtitle.py   # 主字幕窗（Tkinter）
+    │       ├── asr.py        # VAD + SenseVoice + 模型下载
+    │       ├── capture.py    # 麦克风 / 系统声音采集（parec monitor）
+    │       ├── translate.py  # LLM 翻译 / 总结 / 对话
+    │       ├── summarize.py  # 总结 CLI
+    │       ├── config.py     # 配置加载（YAML → dataclass）
+    │       ├── deps.py       # 运行依赖自检
+    │       ├── keys.py       # Key 存储 / 服务商识别 / 历史
+    │       ├── providers.py  # 服务商数据层（模型列表拉取）
+    │       ├── paths.py / langs.py / sysmon.py
+    │       └── ui/           # theme / widgets / page_* / key_ui / overlay_card
+    └── windows/              # Windows 版（自 Linux 版复制后独立演进）
+        ├── packaging/build_windows.py   # PyInstaller one-dir → 便携 zip
+        ├── requirements.txt  # 含 Windows 专属：soundcard / psutil / platformdirs / PySide6
+        ├── tests/run.py      # 测试入口（Python，替代 bash）
+        └── livetrans/        # 结构与 Linux 版一致，平台差异文件待改造（见第 4 节）
 ```
 
 ## 6. 开发环境与依赖
@@ -160,6 +217,575 @@ translate/
 ---
 
 ## 8. 附录：开发日志
+
+### 2026-09-11（二十六）：死代码清扫（仅 Windows 版）
+
+方法：AST 收集全树定义（函数/类/方法）→ 全文本引用计数（注释/字符串提及
+也算引用，宁多留不误删）→ 逐个人工复核 → 删后全量回归。
+
+**已删**：
+- `langs.dialog_audio_label()`、`sysmon.ollama_vram_gb()`、
+  `keys.remove_history()` —— 全树零引用（各自保留被真实使用的姊妹函数）；
+- `packaging/installer_gui.py` 的 `PlanState` + `_pip_ok()`（含孤儿化的
+  `field` 导入）—— 向导演进遗留，文件内外均无引用；
+- `tests/test_installer.py` —— 守的是 Linux install.sh，该脚本在 Windows
+  树中不存在，此用例在**任何平台**都无法通过（纯死文件）；
+- `build/`（PyInstaller 临时工作目录，63MB，每次构建重建）。
+
+**复核后保留（易误判项）**：`asr.isatty`（stdout 包装类的流协议方法，tqdm
+动态调用）、`summarize.py`（page_sessions 以 `python -m livetrans.summarize`
+子进程调用）、`diagnose.py`（手动诊断工具）、`installer_gui.py`（控制台
+「安装向导」按钮真实拉起，含 Windows 进程适配）、`test_installer_gui.py`
+（平台门控跳过，守向导 dry-run/二次确认不变量）、`run.log`（活跃运行日志，
+自动轮转）。
+
+**验证**：死代码扫描复扫（函数级候选 6→1，仅剩协议方法）；py_compile +
+全套件 15 文件全绿 + selfcheck 10/10。
+
+### 2026-09-11（二十五）：M5 收尾——拆包后打包回归 + Inno Setup 安装器
+
+- **拆包后打包回归（实测）**：`build_windows.py --portable` 真实构建
+  **619 MB**（含 models/ 258MB）→ `dist/LiveTrans/LiveTrans.exe`；
+  frozen 冒烟：`LiveTrans.exe --overlay` 启动存活 10s 无导入崩溃。
+  overlay 拆包对打包链路零影响（入口 run_livetrans.py + lazy import 被
+  PyInstaller 静态分析正常跟随）。环境坑：PyInstaller COLLECT 清空旧
+  dist（1382 文件）会触发环境的批量删除保护 → 先手动清 dist 再构建。
+- **打包契约回归测试**：新增 `tests/test_packaging.py`（4 组）：入口
+  run_livetrans.py 与 --overlay 转发、overlay 包 -m 入口（__main__.py）、
+  build_windows 素材齐全（且不得再引用拆包前的 overlay.py 路径）、
+  `app_command` 源码 -m / frozen exe--overlay 双语义（monkeypatch
+  sys.frozen）；
+- **Inno Setup 安装器**：新增 `packaging/installer.iss`（装 {autopf}，
+  数据自动落 %LOCALAPPDATA%\LiveTrans——paths.DATA_DIR 约定天然适配
+  只读安装；开始菜单含「字幕外挂 --overlay」入口；可选桌面图标）；
+  `release.yml` 接入（choco 装 innosetup → ISCC /DVERSION 编译 →
+  `-setup.exe` 进 artifact 与 Release 汇总 + 发版说明更新；步骤
+  continue-on-error，安装器失败不阻断 zip 发版）。
+
+**验证**：真实构建 + frozen 冒烟 + 全套件 16 文件全绿（新增
+test_packaging 5 项断言），selfcheck 10/10。M5 的可选安装器自此补齐；
+M6（热键/自启/自动更新）未动。
+
+### 2026-09-11（二十四）：结构优化第二批（SourceManager 抽取 + 管线测试 + 命名澄清）
+
+- **P2-2 `run_overlay` 测试接缝**：把音频源启停/切换/暂停的闭包群抽成
+  `overlay.pipeline.SourceManager` 类（GUI 鸭子类型解耦：sink 只要求
+  set_level/set_partial/set_status；`source_factory` 注入点供测试替换假源；
+  `persist` 回调解耦落盘）。`run_overlay` 瘦身为纯装配（字体设置 → 窗口 →
+  SourceManager → boot 线程 → app.exec）。新增
+  `tests/test_overlay_pipeline.py`：替身 ASRWorker（只等停止事件）+ 假采集，
+  6 组用例覆盖按 kind 启停切换、非法来源归一化 + persist、暂停/继续/
+  stop_all、不可用源跳过提示、全不可用占位提示、ASR 未就绪空转与镜像模式
+  守卫——**全程不需要音频设备**；
+- **P2-1 capture 命名澄清**：新增 `WasapiLoopbackCapture = ParecCapture`
+  别名（Windows 上是 WASAPI loopback 而非 parec 子进程）；历史名保留
+  （main/pipeline/diagnose 按旧名引用），配置键不动；
+- **P2-3 修正**：复核发现 `.github/workflows/test.yml` **已有 windows job**
+  （windows-latest + tests/run.py），评审报告该项判断有误，无需新增。
+
+**验证**：`tests/test_overlay_pipeline.py` 7 项断言全过；全套件 15 文件
+（含新文件）全绿，selfcheck 10/10。
+
+### 2026-09-11（二十三）：代码结构优化第一批落地（P0 全部 + P1-1 + P1-3 色表）
+
+按《CODE_STRUCTURE_REVIEW.md》执行，每步全绿再进下一步：
+
+- **P0-1 import 清理**：`ui/` 六个页面/卡片文件（page_audio/page_backend/
+  page_chat/page_sessions/overlay_card/key_ui）删除 42 行复制粘贴的
+  stdlib import（AST 外正则检测未使用项，py_compile + 套件验证）；
+- **P0-2 配置唯一写入层**：新增 `livetrans/configstore.py`
+  （`patch_section` 读→合并单段→写回、`refresh_sections` 保存前拉新、
+  `read_section`）。三个写入方全部收口：`overlay.persist_overlay` 变委托；
+  `main._persist_subtitle_style/_persist_dialog` 变委托；
+  `launcher._apply_and_save` ①外挂托管键（pos/宽/偏移/配色）一律取磁盘
+  最新（旧代码 pos_x=0 会被真值判断吞掉的 bug 一并修掉），字号/两根透明度
+  仅当控制台未动过滑条时取磁盘 ②整份重写前 refresh subtitle/dialog 段，
+  不再用启动快照冲掉字幕窗运行中的修改。新增 `tests/test_configstore.py`
+  （5 组用例：合并/并发不丢键/段内合并不覆盖/兼容委托/拉新）；
+- **P0-3 Tooltip 收口**：删除 `subtitle._Tooltip`（51 行），12 处调用点
+  切到 `ui.widgets.ToolTip`（主页同款观感，含置顶属性与 winfo_exists 防护）；
+- **P1-1 overlay 拆包**：`livetrans/overlay.py`（1484 行）→
+  `livetrans/overlay/` 包（__init__ re-export 保住全部导入路径与
+  `python -m livetrans.overlay` 入口 + __main__.py）：
+  `_common.py`（配色/_log/_rounded_path）/ `win32.py` / `persist.py` /
+  `window.py`（OverlayWindow 478 行）/ `panel.py`（面板+弹窗+气泡 620 行）/
+  `pipeline.py`（run_overlay + main）。函数内相对导入 `.keys/.sysmon`
+  升级为 `..keys/..sysmon`；测试的 Win32 常量导入经 __init__ re-export 保留。
+  教训：迁移脚本按行号切片丢了两行（PANEL_BTN_HOVER/HWND_NOTOPMOST），
+ 靠测试逐一暴露后补齐——"每步全绿"纪律再次兜底；
+- **P1-3 色表收口（部分）**：subtitle.py 与 ui/theme 重复的 6 个色值
+  （INK/SIGNAL/PANEL/PANEL_2/BORDER/INTERNAL）改为从 theme 导入；
+  字幕窗特有 4 色保留并注明与控制台的刻意差异（BG 更暗/WARN 更橙）。
+
+**未做（下一步候选）**：subtitle `_Pane` 物理拆分（值低风险中，暂缓）、
+P1-2 控制台配置单表示（建议 M5 打包前做）、P2-2 run_overlay 测试接缝、
+P2-3 CI windows job。**验证**：selfcheck 10/10 + 全套件 14 文件全过
+（test_overlay_qt 20 项）。
+
+### 2026-09-11（二十一）：修复设置弹窗透明回归 + 控制台/字幕窗字体美化（ui-ux-pro-max 协作）
+
+**① 透明回归修复**：用户反馈 ⚙ 设置弹窗背景变透明——上一轮把顶层背景交给
+QSS `QWidget` 规则 + `WA_StyledBackground`，实测在 `WA_TranslucentBackground`
+的半透明 Tool 窗上不可靠（offscreen 探针：弹窗中心 alpha=0）。
+修复：顶层背景改由 `_TipHost.paintEvent` 手绘 9px 圆角矩形（与字幕窗同一套
+画法），QSS 只管子控件（`QWidget` 规则去掉 background/border-radius），
+两个窗口都去掉 `WA_StyledBackground`。新增
+`test_panel_popup_background_painted`（grab 像素采样：边缘 #1c2230 不透明、
+四角透出）→ 外挂测试 20 项全过。
+
+**② 控制台/其他窗口美化**（应用 ui-ux-pro-max 设计系统检索：深底+高对比+
+明确悬停反馈方向与现有一致，最大短板在字体）：
+- `theme.pick_fonts()` 补 **Windows 字体候选**（Microsoft YaHei UI/雅黑 →
+  Noto/WenQuanYi；等宽 Cascadia Mono/Consolas）——此前只有 Linux 候选，
+  Windows 上整个控制台回退宋体（移植简报 3.1-13 的遗留项）；
+- `theme.ui_family()` 懒解析助手（导入期不能枚举字体族）：字幕窗
+  `subtitle.py` 28 处写死 `("sans", …)`、`ui/widgets.py` 提示/气泡默认字体
+  全部收口到雅黑栈；主字幕窗文字/按钮/tooltip 与控制台观感统一；
+- 次级文字 DIM 统一为 #8b93a7（与外挂面板一致）。
+验证：`test_ui_theme`（按钮两档同高/输入域同高，相对断言不写死像素）全过，
+全套件绿，自检 10/10。
+
+### 2026-09-11（二十）：外挂 UI 打磨（界面/按钮/文字）
+
+功能稳定后的一轮视觉优化，只动样式与文字层级，不改行为：
+
+- **字体**：面板/设置弹窗/提示气泡统一中文字体栈
+  （Microsoft YaHei UI → 雅黑 → PingFang SC → Noto Sans CJK SC）；
+  `run_overlay` 给 QApplication 设同一族字体——Qt 简中 Windows 默认 CJK
+  回退是宋体（衬线、小字号发虚），字幕绘制 `_fonts()` 的 `QFont()` 默认
+  构造会继承 app 字体，字幕文字一并受益；
+- **按钮**：加描边（默认/hover/pressed 三态）、checked 态带边框；
+  「退出」用 `#exitBtn` objectName 上危险色 hover（暗红底/粉红字）；
+- **文字层级**：面板滑条与弹窗数值拆成「灰标签 + 青色数值」两档
+  （`QLabel[role=dim/val]` 属性选择器，对齐控制台 theme），
+  数值右对齐定宽不再抖动；「声音来源」标签同步转灰；
+- **形状**：面板与设置弹窗 `WA_StyledBackground + WA_TranslucentBackground`
+  + QSS `border-radius: 9px` → 四角圆角透出背后画面；滑条改 6px 细槽 +
+  14px 大圆点（hover 变白）；面板边距/间距放宽（8/7/6）；
+  弹窗滑条加宽到 160、数值列定宽 34。
+
+**测试**：`test_settings_popup_draggable_and_labels` 补断言
+（dim/val 角色、op_val 与 cfg 同步、exitBtn objectName）→ 19 项全过，
+套件全绿，自检 10/10（面板悬停提示控件数 15→17：新增两个数值标签）。
+
+### 2026-09-11（十九）：配色改为"会话生效 + 保存方案"（重启回默认）
+
+用户反馈：外挂字幕的颜色和背景希望每次重启回到默认，要么提供「保存方案」。
+两个诉求一并满足，取显式控制语义：
+
+- **颜色不再随几何落盘**：`persist_geom` 移除 `text_color`/`bg_color`——此前
+  拖动窗口/调字号/退出都会把当时试的颜色固化进 config.yaml；
+- **⚙ 弹窗新增两个按钮**：「保存方案」→ 新增 `OverlayWindow.persist_scheme()`
+  只把当前文字/背景颜色写盘（下次启动沿用）；「恢复默认」→ 白字黑底 +
+  覆盖已存方案；取色器改动仍实时预览，但只在本会话生效（日志会提示）；
+- **控制台保存不再冲掉方案**：`_apply_and_save()` 里 overlay 的
+  text_color/bg_color 改为从磁盘最新值补齐（self.cfg 是启动快照，
+  外挂后来保存的方案不在里面——与（十七）"丢颜色"同类坑）；
+- **存量试验配色已清**：config.yaml 里用户此前试出的
+  `#b0ff70`/`#699faa` 按新语义移除（重启即回默认白字黑底；想要可重新
+  取色后点「保存方案」）。
+
+**测试**：新增 `test_scheme_persist_and_reset`（几何不带色 / 保存写盘 /
+恢复默认覆盖）→ `test_overlay_qt.py` 19 项全过，套件全绿，自检 10/10。
+
+### 2026-09-11（十八）：外挂面板/设置弹窗悬停提示气泡（对齐控制台 ToolTip）
+
+用户反馈：字幕栏顶部选项悬停时要有简洁明了的提示（主页控制台的提示体验不错）。
+
+**根因**：面板/设置弹窗是**永不激活**的窗（WS_EX_NOACTIVATE，不抢焦点），
+原生 QToolTip 的触发在这种窗上不可靠——（十六）加的 `WA_AlwaysShowToolTips`
+实测用户仍看不到提示。
+
+**方案**：自绘深色气泡接管，交互模型照搬控制台 `ui/widgets.ToolTip`
+（#0b0f18 底 + 浅字，450ms 延迟，Enter 弹出 / Leave·点击·隐藏即收起）：
+- `TipBubble(QLabel)`：单例、`Qt.ToolTip` 无边框置顶窗、
+  `WA_TransparentForMouseEvents`（永不拦鼠标）、超宽 380px 自动换行、
+  贴控件下方，出屏时翻到控件上方并钳回所在屏 availableGeometry；
+- `_TipHost` 混入：对容器及全部子控件装事件过滤器，Enter→schedule 延迟弹出、
+  Leave/Hide/MouseButtonPress→收起；提示文本仍存各控件 `setToolTip`
+  （单一数据源）；ControlPanel/SettingsPopup 的 `hide()` 一并收起气泡；
+- 移除两处 `WA_AlwaysShowToolTips`（避免与自绘气泡双重显示）。
+- 面板 15 个控件全部有提示文案（此前已配好，数据源无需改）。
+
+**测试**：`test_overlay_qt.py` 的 tooltip 用例改写为 `test_hover_tips_bubble`
+（控件全覆盖 + 显示/收起/取消 + 气泡不拦鼠标）；顺带修正
+`test_bg_color_change_reaches_paint`——起点色不再写死 #000000
+（用户实测已把背景色调成 #699faa 并持久化，恰证明（十七）的颜色修复生效），
+先归零→改色→还原。18 项全过，套件全绿。
+
+### 2026-09-11（十七）：外挂设置弹窗二轮反馈 4 项（拖动/背景色/文案/翻译来源答疑）
+
+用户实测反馈 4 项，全部处理：
+
+1. **⚙ 设置弹窗无法用鼠标移动**：无边框 + 不激活窗没有标题栏，且没实现拖动
+   → `SettingsPopup` 增加 mousePress/Move/Release 拖动（按住空白或文字即可拖，
+   滑条/按钮仍走自身交互；Qt 按下隐式抓取鼠标，拖出边界不丢）。顺带修复布局：
+   `QGridLayout` 单参 `addWidget` 实测是"每件一行"纵向堆叠（探针证实），说明/
+   完成按钮还被钉在第 4 行挤在中间 → 全部改为显式行列（label | 控件 | 值）。
+2. **背景颜色调整没反应**（文字颜色正常）：两条根因——
+   ① 取色器开了 `ShowAlphaChannel`，但 `col.name()` 存 hex 会丢弃 Alpha，
+   用户拖 Alpha 滑条（想调透明度）等于空操作 → 取色器去掉 Alpha 通道，
+   透明度统一归主面板「背景透明度/文字透明度」两根滑条；
+   ② 控制台 `_apply_and_save()` 重建 `overlay` 段时丢掉 `text_color`/`bg_color`
+   （外挂 ⚙ 调好的颜色控制台一保存就丢、重启外挂即回退）→ 改为先继承
+   `ov_prev` 再覆盖。RGB 修改实时重绘链路经像素采样验证正常（#000000→#ff0000）。
+3. **文案对齐控制台叫法**：面板「音频」→「声音来源」（含镜像态"跟随主程序"），
+   滑条「背景/文字」→「背景透明度/文字透明度」；⚙ 弹窗说明文字同步。
+4. **外挂翻译来源答疑**：外挂启动时读 config.yaml 的 `translate.provider` +
+   `providers[...].model`，即首页「翻译后端」的选择（控制台启动外挂前会先
+   `_apply_and_save()` 落盘）；外挂运行中改首页模型不会热切换，需停止再启动；
+   镜像模式则完全跟随主程序。「启动外挂」按钮 tooltip 已补充说明。
+
+**测试**：`test_overlay_qt.py` 新增 2 项（⚙ 弹窗可拖动+文案、背景色到达绘制）
+→ 18 项全过；selfcheck 10/10 + 专项套件全绿。
+
+### 2026-09-11（十六）：用户实测反馈 7 项修复（黑框/缩放/装载状态/外挂长句/设置面板）
+
+用户实际使用后反馈 7 项，全部定位到根因并修复：
+
+1. **控制台窗口无法调整大小**：`launcher.py` 写死 `resizable(False, False)`（Linux 版
+   固定布局的遗产）→ 改 `resizable(True, True)`，保留 minsize(760,520)；
+   `_fit_window` 的高度跟随页面行为保持不变。
+2. **黑色终端反复闪现**：真凶是资源状态条**周期轮询 nvidia-smi**（控制台程序）——
+   GUI 从 pythonw（无控制台）运行时，每 spawn 一个控制台子系统程序 Windows 都新建
+   控制台窗口。新增共享模块 **`winsub.nowin()`**（`CREATE_NO_WINDOW`，非 Windows 为空
+   dict），应用到 nvidia-smi（sysmon）、安装向导全部子进程（pip/ollama list/pull/rm）、
+   `installer_gui` 的 `start_new_session`（POSIX 专有参数，Windows 换 CREATE_NO_WINDOW）。
+3. **本地模型装载状态不明**：`_local_mem_text()` 改为三态——「服务未运行 / 模型未装载
+   （首次翻译自动载入，冷启约 30~40s）/ 装载完毕 · 常驻 N 个 · 共 X GB」，
+   并区分"服务没起"与"服务在但模型未驻留"（原版混为一谈）。
+4. **外挂长句译文不显示**：内容过长时窗口无限撑高、超出屏幕 → 底部内容被裁。
+   修复：高度封顶 55% 屏高 + 溢出时**底对齐绘制**（最新译文贴底永远可见，
+   被裁的是顶部旧文）。测试用例确认 594/1080 封顶生效。
+5. **面板按钮悬停无文字提示**：面板从不激活（不抢焦点），Qt 默认非激活窗口
+   不显示 tooltip → 面板与设置弹窗显式 `WA_AlwaysShowToolTips`。
+6. **缺字号/宽度/颜色设置**：新增 **⚙ 设置弹窗**（`SettingsPopup`）：
+   字体大小滑条（16-56，实时预览）、字幕宽度滑条（20-100%），
+   文字/背景颜色取色器（QColorDialog）；松手/选完才写回 config.yaml
+   （`OverlayConfig` 新增 `text_color`/`bg_color` 字段，`persist_geom` 一并持久化）。
+7. **「位置」按钮多余**：已从面板删除（关穿透时字幕本就可直接拖动/拖角缩放）；
+   `toggle_edit_mode` 方法保留（测试与程序化调用兼容）。
+
+**测试**：`test_overlay_qt.py` 新增 4 项（位置按钮删除+⚙存在、tooltip 属性、
+长句封顶、颜色字段+设置弹窗实时生效）→ 16 项全过；全套件自检 10/10 + 专项全绿；
+真实启动外挂链路复核正常。
+
+### 2026-09-11（十五）：安装 Ollama + 本地翻译模型落地（GPU 100%）
+
+按用户决策「deepseek 默认 + 本地兜底」补齐本地侧：
+
+- **安装**：`winget install Ollama.Ollama --silent`（0.34.0，装到 `%LOCALAPPDATA%\Programs\Ollama`，
+  自动加入用户 PATH 并自启服务——之前那条"幽灵 PATH"条目自此有了真实归属）。
+- **模型**：`ollama pull qwen3:4b-instruct`（2.5GB）。
+- **实测（项目 LLMTranslator 走 ollama，非裸 API）**：
+  - `ensure_local_backend` 正确探测"服务已就绪"；
+  - 翻译质量正常（英→中三句全对）；**热态 125~172ms/句**，优于 Linux 版在同一张
+    4070 上的基准（0.13~0.33s/句）；冷态 39.6s 为模型加载进显存的一次性开销；
+  - `ollama ps`：**100% GPU**（3.2GB，ctx 4096），显存 4.8/8GB——qwen3 + SenseVoice +
+    声纹同驻显存仍有余量。
+- **配置未改**：默认仍是 `deepseek`（云端）+ `fallback_local: true`——云端失败时
+  自动兜底到本地；想切本地为主，控制台「翻译后端」页选 Ollama 即可。
+- 注：Ollama 默认 5 分钟空闲后自动卸载模型（下次使用重新加载，即再次冷态）；
+  常驻可在 `ollama serve` 环境设 `OLLAMA_KEEP_ALIVE`（项目不干预）。
+
+### 2026-09-11（十四）：修复「启动外挂」报错（deps.py 漏改 GTK 自检）
+
+**现象**：用户点控制台「启动外挂」即弹窗报错"缺少运行组件"，还给出
+`sudo apt install python3-gi ...` 的 Linux 命令；`run.log` 里没有任何外挂记录
+（说明死在启动前的自检，而非运行中）。
+
+**根因**：`deps.py` 是 Linux 版原样复制，`missing_overlay_deps()` 检查的还是
+**GTK3 栈（gi/cairo）+ parec** —— W3 已把 Windows 外挂换成 PySide6/Qt6，
+这个自检函数却没跟着改 → 在 Windows 上必然误报"全缺"，用户被 apt 命令劝退。
+
+**修复（`deps.py`，Linux 分支原样保留）**：
+- `missing_overlay_deps()`：Windows 检查 `PySide6`（含 `QtCore` DLL 真实可加载性）
+  + `missing_system_deps()`（soundcard/PortAudio）；Linux 保持 gi/cairo/parec 原逻辑。
+- `missing_system_deps()`：Windows 增加 soundcard（MediaFoundation/WASAPI）检查。
+- 新增 `overlay_fix_hint()`：按平台返回修复命令（Windows=pip / Linux=apt），
+  `overlay_card.py` 弹窗改用它，不再直接引用 `APT_FIX`。
+
+**验证**：本机自检返回全空（不误报 GTK/parec）；从源码真实启动外挂
+→ 窗口创建、keys 注入、SenseVoice/声纹加载、deepseek 后端就绪、
+实际识别并翻译一句（ttft 875ms）全链路 OK。测试套件全绿。
+
+### 2026-09-11（十三）：翻译后端对齐 Linux 版（deepseek 默认 + Ollama 本地兜底）
+
+**背景**：分析确认翻译后端体系两版**逐字节相同**（`translate.py`/`providers.py`/`keys.py`/
+`config.py`/`config.example.yaml`/`ui/key_ui.py`/`ui/page_backend.py` 全部 SAME），
+差异仅在 `config.yaml` 的两处**测试遗留改动**。按用户决策对齐并完成平台适配。
+
+**① Windows 版专属修复（`translate.py` 的 `ensure_local_backend`，Linux 版不动）**
+
+| 位置 | Linux 原实现 | Windows 适配 |
+|---|---|---|
+| Ollama 未安装提示 | `curl -fsSL https://ollama.com/install.sh \| sh` | `https://ollama.com/download/windows` 下载页 |
+| 自动拉起 ollama serve | `start_new_session=True`（POSIX 脱离终端） | `CREATE_NO_WINDOW`（不弹黑框；该 POSIX 参数在 Windows 无效） |
+
+同型修复：`ui/page_backend.py` `_open_installer()` 的 `start_new_session` → `CREATE_NO_WINDOW`；
+`packaging/installer_gui.py` 两处 Linux 文案（Ollama 安装指引、`bash install.sh --remove-local` 引用——
+Windows 版没有该脚本，删除引用）。
+
+**② 配置对齐（`config.yaml`）**
+
+- 还原测试遗留：`overlay.source: both`、`local.unload_others_on_start: true`、首行注释 —— 与 Linux 版一致。
+- 用户决策「默认云端 + 保留本地兜底」：`translate.provider: deepseek`（唯一有意保留的两版差异），
+  `fallback_local: true` 不变。
+
+**③ 验证**
+
+- `ensure_local_backend` 在本机（无 Ollama）正确抛错且提示为 Windows 下载页（无 `install.sh` 残留）。
+- 兜底链路完整：`provider=deepseek`（api 类型）+ `fallback_local=true` + `ollama`（local 类型）存在
+  → `_make_fallback_builder()` 返回构造器，云端失败时自动切本地。
+- 测试套件全绿（自检 10/10 + 专项全 PASS）；`translate.py`/`page_backend.py`/`installer_gui.py` 编译通过。
+- **注意**：`translate.py` 自此两版不再逐字节相同（+21/-4 为 Windows 平台分支），
+  后续同步该文件时需保留此差异。
+
+### 2026-09-11（十二）：开发环境迁移 Anaconda → Miniconda（conda-forge）
+
+**动机**：打包慢（150s）、体积大（2014MB 需手工排除 1.4GB）。根因不是项目问题，而是
+**开发环境落在 Anaconda 的 `base`**（507 个包，含 torch/jax/vtk/cv2/Jupyter 等），
+PyInstaller 要遍历整棵依赖树。
+
+**执行**：
+
+1. **确认影响面**：`base` = `D:\anaconda` 本身（507 包）；`envs\agent`（Python 3.10，176 包）、
+   `envs\bp`（Python 3.14，160 包）建在其下 —— 卸载会一起删除。经确认两个环境均不再需要。
+2. **卸载 Anaconda**（21.7 GB）：官方卸载程序**只删了 `envs`，base 原封不动**
+   （21.7GB / 570,336 文件仍在）→ 手动 `cmd /c rd /s /q D:\anaconda`。
+   另清理：用户 PATH 里 5 条 `D:\anaconda\*`、`~\Documents\WindowsPowerShell\profile.ps1`
+   的 conda 初始化块、`.condarc`/`.conda`/`.continuum`/`.anaconda`、开始菜单文件夹、注册表项。
+3. **安装 Miniconda** 到 `D:\miniconda`（不勾 PATH，`D:\python` 保持为默认 `python`）。
+4. **配置 conda-forge**（避开 Anaconda 官方源的商用许可限制）：
+   `conda config --remove-key channels && --add channels conda-forge && --set channel_priority strict`。
+   ⚠ 仍报 ToS 错误 —— 因为 `default_channels` 是**内置值**且 `conda config --set` 不接受它；
+   解决：创建环境时显式 `--override-channels -c conda-forge`。
+5. **建专用环境**：`conda create -n livetrans python=3.12 -y --override-channels -c conda-forge`
+   （**仅 20 个包**，对比 Anaconda base 的 507）；再 `pip install -r requirements.txt pyinstaller`。
+
+**效果（实测，均从零干净构建）**：
+
+| 指标 | Anaconda base | conda-forge 专用环境 |
+|---|---|---|
+| 打包耗时 | 149.9 s | **54.6 s**（快 2.7 倍） |
+| 产物体积 | 621 MB | **619 MB** |
+| **文件数** | 3349 | **1375**（少 59%） |
+| 手工 EXCLUDES | 必需（否则 2014MB） | 仅少量通用项 |
+
+> 文件数大降揭示了一个此前被掩盖的问题：`--clean` **并没有真正清空 `dist/LiveTrans`**
+> （PyInstaller 的 COLLECT 是增量复制），导致历次打包的 `skimage`/`h5py`/`astropy` 等
+> **旧残留层层堆积**。这些包其实**根本不在新环境里**。排查时一度误以为 EXCLUDES 失效。
+
+**④ 打包新环境暴露的两个 conda 特有问题（已修）**
+
+conda 把非 Python 运行库放在 `<env>\Library\bin\`，PyInstaller **不会去那里找**，
+于是打包后运行时报 "DLL load failed"（DLL 明明在环境里，只是没被带上）：
+
+| 报错 | 缺失的 DLL | 位置 |
+|---|---|---|
+| `DLL load failed while importing _ctypes` | `ffi-8.dll`（注意不是 `libffi-8.dll`） | `Library\bin` |
+| `DLL load failed while importing _tkinter` | `tk86t.dll`、`tcl86t.dll`、`zlib1.dll` | `Library\bin` |
+
+→ 新增 `conda_runtime_dlls()`：从 `Library\bin` 与 `DLLs` 里有选择地收集关键运行库
+（libffi / tk / tcl / zlib / ssl / sqlite / expat / openblas），用 `--add-binary` 带上。
+**只挑明确需要的**，避免把整个 `Library\bin`（常几百 MB）塞进包。
+
+**⑤ 最终验证（打包后的 exe，非源码）**
+
+- `--help` / `--list-devices` / `--overlay --help` 三条路径正常。
+- **真实端到端**：exe 启动外挂 + 系统声音 → 4 条识别 + 4 条翻译成功；
+  SenseVoice 3.5s、声纹 dim=192/453ms、keys 自动注入 2 个、deepseek 后端就绪。
+
+### 2026-09-11（十一）：Windows 版 W4+W5 —— 声纹落地、PyInstaller 打包与发版
+
+**成果：声纹在 Windows 实测可用；便携版打包成功并冒烟通过，体积从 2014MB 降到 621MB。**
+
+**① 声纹（W4）**
+
+- 装 `sherpa-onnx` 1.13.8 + 复用已有模型 `3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx`（27MB）。
+- 实测：模型载入 **422ms**、`dim=192`、向量提取与聚类正常；过短段/None/未启用均安全返回空标签；
+  `build_tracker(未启用)` 返回 None（零开销）。**依赖链在 Windows 上完全就绪**，
+  真实区分效果需真人语音验证（合成音会被判为同一人，属预期）。
+- **顺手修掉一个两平台共有的 bug**：`speaker.py` 使用了 `BASE` 但只 import 了
+  `MODELS_DIR, models_search_dirs` —— 当配置里写**相对路径**的 `speaker.model` 时
+  会 `NameError`。Linux 版同样存在，**两平台一并修复**。
+
+**② 打包（W5）：`build_windows.py` 从"能跑"到"真能出包"**
+
+遇到并解决 5 个真实问题（全部记入脚本注释）：
+
+1. **`webrtcvad-wheels` 与 PyInstaller 自带 hook 不兼容**
+   → 自带 `hook-webrtcvad.py` 假设 webrtcvad 是包，而 wheels 版是
+   `webrtcvad.py` 单文件 + `_webrtcvad.cp312-win_amd64.pyd`，导致
+   `ImportErrorWhenRunningHook`、打包直接失败。
+   → 新增 `packaging/hooks/hook-webrtcvad.py` 并用 `--additional-hooks-dir` 优先加载。
+2. **Anaconda 环境把整套 Jupyter/科学计算栈牵连进来**，`jupyter labextensions` 的
+   超长路径（`vendors-node_modules_...`）让 COLLECT 阶段 `FileNotFoundError`。
+   → EXCLUDES 大幅扩充（Jupyter、conda、科学计算、GUI 绑定等）。
+3. **包体积 2014MB**：实测 `torch` 290MB + `jaxlib` 205MB + `vtk.libs` 166MB +
+   `cv2` 98MB + `panel` 98MB 等全是无关依赖（项目只用 onnxruntime 推理）。
+   → 精准排除后 **2014MB → 621MB**（含 258MB 模型），**省 1.4GB**。
+4. **`setuptools` 不能排除**：PyInstaller 运行时钩子 `pyi_rth_pkgres` 依赖
+   `pkg_resources`（进而 `jaraco.text`），排掉后 exe 启动即
+   `ModuleNotFoundError: No module named 'jaraco.text'`。
+5. **相对导入在打包后失效**：`livetrans/main.py` 用 `from .asr import ...`，
+   被 PyInstaller 当顶层脚本执行时 `ImportError: attempted relative import
+   with no known parent package`。→ 新增顶层入口 **`run_livetrans.py`**（绝对导入
+   `livetrans.main`，并转发 `--overlay`），打包入口指向它。
+6. **`keys.env` 未被注入**：用户直接跑 exe（不经控制台）时没人调 `merged_env()`，
+   翻译后端报"需要环境变量 DEEPSEEK_API_KEY"。
+   → 在 `main.py` 与 `overlay.py` 的启动处**兜底注入** `key_env_overlay()`
+   （已存在的环境变量优先，不覆盖用户显式设置）。
+
+**③ 打包产物实测**
+
+| 项 | 结果 |
+|---|---|
+| 体积 | 621 MB（含 258MB 模型；排除无关依赖前为 2014MB） |
+| 启动 | `LiveTrans.exe` 可执行，`--overlay` 分派正常 |
+| 设备枚举 | ✅ 列出 38 个设备 + 4 个 WASAPI loopback 设备 |
+| SenseVoice | ✅ frozen 下 3.3s 加载成功 |
+| 声纹 | ✅ `dim=192`、422ms 载入 |
+| API key | ✅ 自动从 keys.env 注入 2 个 |
+| 翻译后端 | ✅ deepseek/deepseek-flash 就绪 |
+
+**④ 新增测试**
+
+- `tests/test_speaker_win.py`（7 项）：BASE 导入（守住上述 NameError 回归）、
+  未启用零开销、None/空/过短音频安全、降级路径、配色映射、模型定位与 ready 一致性、
+  **真实向量提取**。
+- 注：用例内**不能输出 `[SKIP]` 字样** —— `tests/run.py` 见到 `[SKIP]` 会把整个
+  用例判为 SKIP，会掩盖同文件其它 PASS（已写入该用例注释）。
+
+**⑤ Windows 版测试总况**：自检 10/10 通过；专项测试 12 个文件全绿
+（新增 `test_capture_win` 11 项、`test_overlay_qt` 12 项、`test_speaker_win` 7 项）。
+
+### 2026-09-11（十）：Windows 版 W3 —— PySide6 重写字幕外挂 + 主程序端到端实测
+
+**成果：外挂字幕用 Qt6 重建完成，功能与视觉对齐 Linux 版；主程序链路实测全通。**
+
+**① 主程序端到端实测（内部 + 外部音频）**
+
+用 DeepSeek 云端后端实跑完整链路（采集 → VAD → SenseVoice → LLM 翻译 → 上屏）：
+
+- **外部音频（麦克风）**：`麦克风 (H USB Audio)` → 识别 `y`/`yeah` → 译文 `是的`（672ms）。
+- **内部音频（WASAPI loopback）**：`系统音频(USB)` → 5 段全部识别并翻译，
+  例如「这把损耗六十九万多舍四百一十六万五套两把满改 m 七兄弟们」→
+  「这把损耗六十九万多，舍掉四百一十六万，五套两把满改M7，兄弟们。」（识别 RMS 0.0857）。
+- 注意：`keys.env` 里的 key 需经 `merged_env()` 注入环境变量（控制台走 launcher 时会做；
+  直接跑脚本要自己注入，否则 `LLMTranslator` 会报"需要环境变量 XXX"）。
+
+**② 字幕外挂：GTK3 → PySide6/Qt6（功能逐项对齐）**
+
+`overlay.py` 整体重写（Linux 版 1111 行 GTK3 保留不动，Windows 版为 Qt 实现）。对照表：
+
+| 能力 | Linux (GTK3) | Windows (Qt6) |
+|---|---|---|
+| 逐像素透明 | `set_visual(RGBA)` + cairo | `WA_TranslucentBackground` + `QPainter` |
+| 鼠标穿透 | `input_shape_combine_region` | Win32 `WS_EX_TRANSPARENT`（+`WS_EX_LAYERED`） |
+| 置顶 / 不抢焦点 | `set_keep_above` / `set_accept_focus(False)` | `SetWindowPos(HWND_TOPMOST)` / `WS_EX_NOACTIVATE` |
+| 圆角与文字 | cairo `arc` + Pango | `QPainterPath.addRoundedRect` + `QFontMetrics` |
+| 定时器 | `GLib.timeout_add` | `QTimer` |
+| 全局指针（悬停检测） | `Gdk.Seat.get_pointer()` | `QCursor.pos()` |
+| 面板样式 | GTK CSS（`#1c2230`/`#39c5b8`/`#dce3ee`） | Qt StyleSheet（同配色） |
+
+覆盖 Linux 版全部能力：无边框/置顶/穿透/不抢焦点、底部居中按宽高比、
+**背景与文字透明度完全独立**、悬停式控制面板（隐藏/暂停/‹›/最新/位置/穿透/固定/退出
++ 双滑条 + 音频来源下拉）、几何写回 config.yaml、声纹 `[Sx]` 标注、镜像模式、
+运行时切换音频来源。
+
+**③ 踩到的坑**
+
+1. **PySide6 6.11.x 在本机 Anaconda 环境 `import QtCore` 报 DLL 加载失败**
+   （6.11.2 先后报"找不到指定的程序"/"找不到指定的模块"）。装 6.8.3 并清掉 6.11 残留后正常。
+   → `requirements.txt` 钉 `PySide6==6.8.3` 并注明原因。
+2. **关穿透时不能把 `WS_EX_LAYERED` 一起清掉** —— LAYERED 是透明背景的前提，
+   清掉后字幕会变成一块不透明黑矩形（不报错，视觉上完全坏掉）。已加专项测试守住。
+3. **打包后 `python -m livetrans.overlay` 失效** → 新增 `paths.app_command()`：
+   frozen 时返回 `[LiveTrans.exe, --overlay]`，源码时返回 `[python, -m, livetrans.overlay]`；
+   并在 `main.py` 的 argparse **之前**摘出 `--overlay` 分派（两个 parser 参数不打架）。
+4. **`paths.BASE` 在打包后指向临时解包目录** → 改为 frozen 时取 `sys.executable` 所在目录
+   （模型/配置就放在 exe 旁边，符合 one-dir 布局）。
+5. **控制台的外挂进程管理用了 `pgrep`/`pkill`**（Windows 没有）→ 改用 `psutil` 遍历/终止，
+   匹配词同时认 `-m livetrans.overlay` 与 `LiveTrans.exe --overlay`。
+
+**④ 实测验证**
+
+- 外挂窗创建：1365x88 → 内容变长自动撑到 1365x121 / 416（不裁切）。
+- **截图确认**：圆角半透明底、原文小字灰色 + 译文大字白色、`[S1]` 声纹前缀、
+  右下角缩放标、悬停控制面板与 Linux 版配色一致。
+- **穿透开关实测**（读回 Win32 扩展样式）：`WS_EX_TRANSPARENT` 正确增删，
+  `WS_EX_LAYERED` 始终保留，`NOACTIVATE`/`TOOLWINDOW` 全程在位。
+- **真实外挂端到端**：启动外挂 + 系统声音 → 3 条字幕上屏并翻译成功
+  （如「螂不随便进应下有老人啊」→「蟑螂不会随便进有老人的家」）。
+
+**⑤ 新增测试 `tests/test_overlay_qt.py`（12 项，全过）**：管线接口齐全（18 个）、
+穿透开关（含 LAYERED 保留）、不抢焦点/不进任务栏、窗口标志（无边框/透明/置顶）、
+几何随内容增长、历史跟随翻页、声纹标注只在换人时出现、译文回填、
+背景/文字透明度独立与边界、位置模式自动关穿透、隐藏显示、几何持久化不破坏其它字段。
+
+### 2026-09-11（九）：Windows 版 W1+W2 —— 麦克风链路与 WASAPI loopback 系统声音
+
+**成果：Windows 版音频链路全部打通并实机验证。**
+
+- **W1 麦克风链路**：`AudioCapture` 本就是跨平台的（sounddevice/PortAudio 同一套 API），
+  实测可用（本机默认输入设备 `麦克风 (H USB Audio)`，16 个输入设备可枚举）。仅更新了报错文案。
+- **W2 系统声音（WASAPI loopback）**：`capture.py` 改造完成，**对外契约完全不变**——
+  `ParecCapture`（类名沿用）、`list_monitor_sources()`、`default_monitor_source()`、
+  `friendly_source_name()` 全部保留原签名，因此 `main.py` / `overlay.py` / 6 个 UI 页面
+  无需任何改动（`list_monitor_sources()` 被 8 处调用，返回 `[(key, label)]` 格式不变）。
+- **踩到并修复的真坑（记入代码注释与测试）**：
+  1. **COM 未初始化**：`soundcard` 底层走 MediaFoundation，在**子线程**里调
+     `all_microphones()` 会抛 `RuntimeError: Error 0x800401f0`（`CO_E_NOTINITIALIZED`）。
+     主线程能用、放进 Thread 就炸，非常隐蔽。→ 新增 `_com_init()/_com_uninit()`，
+     在采集线程入口与所有涉及 soundcard 枚举的函数里兜底调用。
+  2. **`_Microphone` 没有 `samplerate` 属性**（只有 `channels`）→ 取不到时回退 48k。
+  3. **HDMI 音频设备名不含 "hdmi"**：NVIDIA 的音频设备叫
+     "HC-L220A (NVIDIA High Definition Audio)"，只看 "hdmi" 会漏判；
+     蓝牙免提设备（驱动名 `bthhfenum`）会被误判成 USB。
+     → `friendly_source_name()` 关键词表改为**按优先级从具体到宽泛**排列
+     （蓝牙 → HDMI/显卡音频 → 数字 → USB → 模拟/板载），并补充 `nvidia`、
+     `high definition audio`、`bthhfenum`、`hands-free`、`senary` 等实测关键词。
+- **实机验证数据**（RTX 4070 笔记本）：
+  - 枚举到 **4 个 loopback 设备**（NVIDIA HDMI / Steam Streaming / Senary 板载 / USB 音频）；
+    `default_monitor_source()` 自动选中 `扬声器 (H USB Audio)`（与系统默认扬声器一致）。
+  - loopback 采集 12s：**块长恒定 640 采样（40ms@16k）零异常，时长比 1.003**（无丢帧漂移），
+    动态范围 7400 万倍（有清晰声音起伏），静音块占 22%（VAD 有足够静音间隙）。
+  - **全链路验证**：合成人声 → VAD 正确切段 → SenseVoice 识别出结果（0.08s/段）。
+  - `soundcard` 会打印 `SoundcardRuntimeWarning: data discontinuity` —— 经实测判定为
+    **库的误报**（内部缓冲重组时触发），实际块长恒定、时间轴无漂移，不影响功能。
+- **新增专项测试 `tests/test_capture_win.py`（11 项，全过）**：COM 子线程初始化、
+  8 种设备名转换、关键词归类（用例内的设备名**全部取自本机实测**）、
+  48k↔16k 重采样精度与边界、`list_monitor_sources()` 接口契约、
+  `default_monitor_source()` 返回值合法性、Windows 上 `find_monitor_device()` 返 None、
+  `ParecCapture` 可构造、`AudioCapture` 对无效设备正确报错。
+- **测试总况**：Windows 版自检 10/10 通过，专项测试 11 项新增全过、其余全绿。
+
+### 2026-09-11（八）：仓库分叉为双平台（Linux 冻结基线 + Windows 独立实现）
+
+用户决定：**没有主次之分，两个平台都要开发好，push 到 GitHub 时按两个版本共同发行。**
+
+- **目录重构**：`prototype/` → **`git mv` 到 `platforms/linux/`**（保留文件历史，GitHub 上显示为重命名而非删除+新增）；
+  复制一份为 **`platforms/windows/`**，作为 Windows 版独立演进的起点。
+- **Linux 版冻结**：`platforms/linux/` 作为稳定基线，功能与行为不再主动变更；`platforms/linux/tests/run.sh` 等原样保留。
+- **Windows 版改造（W0 骨架）**：
+  - 新增跨平台测试入口 **`tests/run.py`**（等价替换 `run.sh`：同样「退出码 0 且无 Traceback」判定、`[SKIP]` 不计失败、240s 超时），
+    支持 `--list` 与按名过滤；删除 Windows 侧的 `run.sh`。
+  - 新增 **`packaging/build_windows.py`**（对应 Linux 的 `build_deb.sh`）：PyInstaller one-dir → `dist/LiveTrans/`，
+    自动收集 `funasr_onnx`/`sounddevice`/`soundcard` 等隐式依赖，`models/` 存在则随包拷入；支持 `--check` / `--clean`。
+  - 删除 Linux 专用脚本（`build_deb.sh` / `install.sh` / `install-python-deps.sh` / `livetrans.desktop` / `*.sh`）。
+  - `requirements.txt` 加入 Windows 专属依赖：`soundcard`（WASAPI loopback）、`psutil`（替代读 `/proc`）、
+    `platformdirs`（替代 XDG）、可选 `PySide6`；移除全部 apt 说明。
+  - 平台差异用例改为**非目标平台优雅跳过**：`test_overlay_drag.py`（GTK）、`test_installer.py`（bash）、
+    `test_installer_gui.py`（Linux 向导）在 Windows 上打 `[SKIP]` 退出 0；`test_e2e_dialog.py` 的 `/tmp/` 改为 `tempfile`。
+- **CI 双 job**：`test.yml` 拆为 `linux`（ubuntu-22.04 + xvfb + `run.sh`）与 `windows`（windows-latest + Python 3.12 + `run.py`）；
+  `release.yml` 拆为 `build-linux`（两个 deb）/ `build-windows`（便携 zip）/ `release`（汇总到**同一个** Release + `SHA256SUMS`）。
+- **`.gitignore` 重写**：路径从 `prototype/*` 改为 `platforms/*/*`（密钥/会话/模型/配置/产物继续全排除），
+  并补充 Windows 产物类型（`*.exe` / `*.msi` / `*.zip` / `Thumbs.db`）。
+- **文档**：`README.md` 与本文档新增「平台布局与协作约定」，安装/快速开始/开发/发版章节均分平台呈现。
+- **Windows 侧待改造清单**（W1 起逐项处理，扫描实测）：
+  `capture.py`(parec×20 / pactl×8)、`overlay.py`(GTK/cairo)、`sysmon.py`(`/proc`×2)、
+  `paths.py`(XDG×2 / `/usr/share`×4 / chmod×2)、`deps.py`(apt×3)、`main.py`(SIGTERM×1)、`translate.py`(start_new_session×2)。
 
 ### 2026-09-11（七）：完全离线 .deb + 图形化安装向导
 - **模型搜索路径**（离线包的关键）：新增 `paths.models_search_dirs()` —— 读取模型时按

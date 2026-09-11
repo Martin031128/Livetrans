@@ -1,0 +1,38 @@
+# ---- Python 依赖（pip install -r requirements.txt）----
+# 说明：Windows 版由 pip 依赖自足，无需 apt/系统包（Tkinter 随 Python 自带）
+numpy>=1.24            # 音频/张量处理
+sounddevice>=0.4.6     # PortAudio 绑定：麦克风采集与设备枚举（wheel 自带运行库）
+webrtcvad-wheels>=2.0.14  # VAD 断句（静音检测）
+funasr_onnx>=0.4.0     # SenseVoice 本地语音识别（ONNX 推理）
+PyYAML>=6.0            # 配置/术语表/API 历史
+openai>=1.30           # OpenAI 兼容客户端（翻译/总结/对话，一套协议多家服务商）
+httpx>=0.24            # 本机模型服务（Ollama）探测：/api/version、/api/tags
+huggingface_hub>=0.20  # 下载本地识别模型（SenseVoice ONNX，约 233MB，首次运行/向导触发）
+
+# ---- Windows 专属（Linux 版没有这几项）----
+soundcard>=0.4.3       # WASAPI loopback：系统声音采集（替代 Linux 的 parec monitor 源）
+                       # 实测：需在采集线程先 CoInitializeEx（本项目 _com_init 已处理）
+psutil>=5.9            # CPU/内存监控（替代 Linux 读 /proc/stat 与 /proc/meminfo）
+platformdirs>=3.0      # 数据目录：%LOCALAPPDATA%\LiveTrans（替代 XDG）
+
+# ---- 可选：字幕外挂（悬浮字幕窗，PySide6/Qt6）----
+# 不装则「启动外挂」不可用，主字幕窗（Tkinter）不受影响
+#
+# 版本锁定说明（实测）：PySide6 6.11.x 在本机 Anaconda 环境下
+# `import QtCore` 会报 "DLL load failed"（6.11.2 分别报"找不到指定的程序"/"找不到指定的模块"），
+# 6.8.3 则正常。因此这里钉到 6.8.x 这个已验证可用的分支。
+PySide6==6.8.3         # Qt6：逐像素透明 + 点击穿透 + 置顶 + 多屏 + DPI
+
+# ---- 可选：声纹角色标注（多人会议区分说话人；不装则不显示 S1/S2）----
+# 实测可用（Windows）：模型载入 422ms，dim=192，推理正常。
+# 模型缺失时会自动从 hf-mirror 下载（约 28MB）到 models/speaker/。
+sherpa-onnx>=1.10      # 说话人向量提取（CAM++ 中英双语）
+
+# ---- 可选：本地翻译模型服务（不装则用云端 API）----
+# Ollama        https://ollama.com/download/windows   （控制台可自动拉起服务）
+#   ollama pull qwen3:4b-instruct
+
+# ---- 打包（仅发布用）----
+# pyinstaller>=6.0
+#   注意：不要排除 setuptools —— PyInstaller 运行时钩子 pyi_rth_pkgres 需要
+#   pkg_resources（依赖 jaraco.text），排掉则 exe 启动即 ModuleNotFoundError。

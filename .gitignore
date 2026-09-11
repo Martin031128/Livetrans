@@ -1,20 +1,30 @@
 # ---- 密钥与本地数据（绝不提交）----
-prototype/keys.yaml
-prototype/keys.env
-prototype/*.env
-prototype/api_history.yaml
-prototype/config.yaml
-prototype/glossary.yaml
-prototype/sessions/
-prototype/run.log
-prototype/run.log.*
-prototype/models/
+# 两个平台各自的私有数据都在这里排除（platforms/linux = Linux 版，platforms/windows = Windows 版）
+platforms/*/keys.yaml
+platforms/*/keys.env
+platforms/*/*.env
+platforms/*/api_history.yaml
+platforms/*/config.yaml
+platforms/*/glossary.yaml
+platforms/*/sessions/
+platforms/*/run.log
+platforms/*/run.log.*
+
+# ---- 模型（体积大，运行时下载；各平台独立一份）----
+platforms/*/models/
 
 # ---- 打包产物 ----
-prototype/dist/
+# 注意：这些行**不能写行内注释** —— git 会把注释当成模式的一部分，
+# 导致规则静默失效（曾因此让 PyInstaller 的 build/ 目录混进待提交列表）。
+platforms/*/dist/
+platforms/*/build/
 *.deb
 *.AppImage
 *.tar.gz
+*.exe
+*.msi
+*.zip
+*.spec
 
 # ---- Python ----
 __pycache__/
@@ -30,3 +40,5 @@ venv/
 *.swp
 *~
 .DS_Store
+Thumbs.db
+*.lnk

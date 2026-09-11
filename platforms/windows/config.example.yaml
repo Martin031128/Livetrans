@@ -1,0 +1,184 @@
+audio:
+  sample_rate: 16000
+  mic_enabled: true
+  monitor_enabled: true
+  mic_device: null
+  monitor_device: null
+  monitor_source: null
+asr:
+  language: auto
+  vad_aggressiveness: 3
+  min_speech_ms: 200
+  silence_ms: 550
+  max_segment_sec: 8
+  max_words_per_segment: 14
+  pre_buffer_ms: 300
+speaker:
+  enabled: false
+  threshold: 0.55
+  max_speakers: 6
+  min_segment_sec: 0.6
+  model: ''
+  num_threads: 2
+translate:
+  provider: deepseek
+  target_lang: 中文
+  mode: normal
+  context_window: 8
+  llm_concurrency: 2
+  professional_domain: ''
+  glossary_file: glossary.yaml
+  temperature: 0.2
+  fallback_local: true
+dialog:
+  left_role: self
+  self_source: external
+  self_src_lang: 自动
+  self_dst_lang: English
+  other_source: internal
+  other_src_lang: 自动
+  other_dst_lang: 中文
+  bidirectional: true
+providers:
+  deepseek:
+    label: DeepSeek
+    type: api
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+    model: deepseek-v4-flash
+    models:
+    - deepseek-v4-flash
+    - deepseek-v4-pro
+    - deepseek-v4-flash-vision-exp
+  glm:
+    type: api
+    label: 智谱 GLM
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    api_key_env: GLM_API_KEY
+    model: glm-4-plus
+    models:
+    - glm-4-plus
+    - glm-4-air
+    - glm-4-airx
+    - glm-4-flash
+    - glm-4-flashx
+    - glm-4-long
+    - glm-4.5
+    - glm-4.5-air
+    - glm-4.5-flash
+  qwen:
+    type: api
+    label: 通义千问
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+    model: qwen-plus
+    models:
+    - qwen-plus
+    - qwen-max
+    - qwen-turbo
+    - qwen-long
+    - qwen3-max
+    - qwen3-plus
+  kimi:
+    type: api
+    label: Kimi
+    base_url: https://api.moonshot.cn/v1
+    api_key_env: MOONSHOT_API_KEY
+    model: kimi-latest
+    models:
+    - kimi-latest
+    - moonshot-v1-8k
+    - moonshot-v1-32k
+    - moonshot-v1-128k
+  openai:
+    type: api
+    label: OpenAI
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+    model: gpt-4o-mini
+    models:
+    - gpt-4o-mini
+    - gpt-4o
+    - gpt-4.1
+    - gpt-4.1-mini
+    - o4-mini
+    - gpt-5
+    - gpt-5-mini
+  gemini:
+    type: api
+    label: Google Gemini
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    api_key_env: GEMINI_API_KEY
+    model: gemini-2.0-flash
+    models:
+    - gemini-2.0-flash
+    - gemini-2.0-flash-lite
+    - gemini-2.5-flash
+    - gemini-2.5-pro
+    - gemini-1.5-flash
+  claude:
+    type: api
+    label: Anthropic Claude
+    base_url: https://api.anthropic.com/v1
+    api_key_env: ANTHROPIC_API_KEY
+    model: claude-sonnet-4-5
+    models:
+    - claude-sonnet-4-5
+    - claude-opus-4-1
+    - claude-haiku-4-5
+    - claude-3-7-sonnet-latest
+    - claude-3-5-haiku-latest
+  grok:
+    type: api
+    label: xAI Grok
+    base_url: https://api.x.ai/v1
+    api_key_env: XAI_API_KEY
+    model: grok-3
+    models:
+    - grok-3
+    - grok-3-mini
+    - grok-2-latest
+    - grok-4
+  ollama:
+    type: local
+    label: Ollama（本地）
+    base_url: http://localhost:11434/v1
+    api_key_env: ''
+    model: qwen3:4b
+    models:
+    - qwen3:4b
+    - qwen2.5:3b
+    - gemma3:4b
+    - qwen2.5:7b
+session:
+  log_dir: sessions
+local:
+  unload_others_on_start: true
+  auto_unload_min: 0
+  unload_on_exit: false
+assistant:
+  source_type: local
+  provider: ollama
+  model: qwen3:4b-instruct
+overlay:
+  source: both
+  always_on_top: true
+  click_through: false
+  width_ratio: 0.8
+  bottom_offset: 0.08
+  font_size: 34
+  opacity: 0.9
+  text_opacity: 1.0
+  panel_auto_hide: true
+  margin_x: 36
+  margin_y: 16
+  show_source: true
+  pos_x: -1
+  pos_y: -1
+subtitle:
+  text_opacity: 1.0
+  scale: 1.0
+  dst_color: '#ffffff'
+  src_color: '#9399b2'
+  layout: dialog
+  animate: true

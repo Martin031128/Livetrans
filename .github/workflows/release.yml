@@ -9,7 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build-deb:
+  # ---------- Linux 版：产出 deb（普通包 + 完全离线包）----------
+  build-linux:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -19,7 +20,7 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           else
-            V=$(sed -n 's/^__version__ = "\(.*\)".*/\1/p' prototype/livetrans/__init__.py | head -1)
+            V=$(sed -n 's/^__version__ = "\(.*\)".*/\1/p' platforms/linux/livetrans/__init__.py | head -1)
             echo "VERSION=${V:-0.0.0-dev}" >> "$GITHUB_ENV"
           fi
           echo "本次将打包版本：$(grep ^VERSION= "$GITHUB_ENV" | tail -1)"
@@ -30,16 +31,16 @@ jobs:
           sudo apt-get install -y dpkg-dev rsync libportaudio2 libsndfile1
 
       - name: Python 依赖（下载模型需要）
-        run: python3 -m pip install --upgrade pip && python3 -m pip install -r prototype/requirements.txt
+        run: python3 -m pip install --upgrade pip && python3 -m pip install -r platforms/linux/requirements.txt
 
       - name: ① 普通包（不含模型，首次启动自动下载）
-        working-directory: prototype
+        working-directory: platforms/linux
         run: |
           bash packaging/build_deb.sh
           mv dist/livetrans_${VERSION}_all.deb dist/livetrans_${VERSION}_all_online.deb
 
       - name: ② 完全离线包（先下识别/声纹模型，再打进去）
-        working-directory: prototype
+        working-directory: platforms/linux
         run: |
           python3 -c "from livetrans.asr import preload_model; preload_model()"
           python3 -c "from livetrans.speaker import ensure_speaker_model; ensure_speaker_model(log=print)"
@@ -47,39 +48,127 @@ jobs:
           mv dist/livetrans_${VERSION}_all.deb dist/livetrans_${VERSION}_all_offline.deb
 
       - name: 校验和
-        working-directory: prototype
+        working-directory: platforms/linux
         run: |
           cd dist && sha256sum *.deb > SHA256SUMS && cat SHA256SUMS
 
-      - name: 手动触发时：包作为 Actions 产物（Artifacts）供下载
-        if: github.ref_type != 'tag'
+      - name: 产物（Actions Artifacts）
         uses: actions/upload-artifact@v4
         with:
-          name: livetrans-${{ env.VERSION }}-deb
+          name: livetrans-linux-${{ env.VERSION }}
           path: |
-            prototype/dist/*.deb
-            prototype/dist/SHA256SUMS
+            platforms/linux/dist/*.deb
+            platforms/linux/dist/SHA256SUMS
 
-      - name: 打 tag 时：创建 Release 并附上安装包（用自带 gh CLI，无第三方依赖）
-        if: github.ref_type == 'tag'
+  # ---------- Windows 版：产出安装器 + 便携 zip ----------
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 解析版本号
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $v = "${{ github.ref_name }}".TrimStart("v")
+          } else {
+            $m = Select-String -Path "platforms/windows/livetrans/__init__.py" -Pattern '^__version__ = "(.*)"'
+            $v = if ($m) { $m.Matches[0].Groups[1].Value } else { "0.0.0-dev" }
+          }
+          "VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Output "本次将打包版本：$v"
+
+      - name: Python 依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r platforms/windows/requirements.txt pyinstaller
+
+      - name: 构建便携版（PyInstaller one-dir）
+        working-directory: platforms/windows
+        run: python packaging/build_windows.py --portable
+
+      - name: 打包便携 zip 与校验和
+        working-directory: platforms/windows
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/LiveTrans/*" `
+            -DestinationPath "dist/LiveTrans-$env:VERSION-portable.zip" -Force
+          Get-FileHash "dist/LiveTrans-$env:VERSION-portable.zip" -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  LiveTrans-$env:VERSION-portable.zip" } |
+            Out-File -FilePath "dist/SHA256SUMS-windows.txt" -Encoding ascii
+
+      - name: 构建 Inno Setup 安装器（可选产物，失败不阻断 zip 发版）
+        working-directory: platforms/windows
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "找不到 ISCC.exe" }
+          & $iscc /DVERSION=$env:VERSION packaging/installer.iss
+
+      - name: 产物（Actions Artifacts）
+        uses: actions/upload-artifact@v4
+        with:
+          name: livetrans-windows-${{ env.VERSION }}
+          path: |
+            platforms/windows/dist/*.zip
+            platforms/windows/dist/*.exe
+            platforms/windows/dist/SHA256SUMS-windows.txt
+
+  # ---------- 打 tag 时：合并两个平台的产物，创建同一个 Release ----------
+  release:
+    needs: [build-linux, build-windows]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 汇总产物
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name '*.deb' -o -name '*.zip' -o -name '*-setup.exe' -o -name 'SHA256SUMS*' \) \
+            -exec cp {} release/ \;
+          cd release && ls -lh
+          sha256sum *.deb *.zip *-setup.exe > SHA256SUMS 2>/dev/null || true
+          cat SHA256SUMS
+
+      - name: 创建/更新 Release（Linux + Windows 同一发行）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        working-directory: prototype
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           cat > /tmp/notes.md <<EOF
           ## 安装
 
+          ### Linux（Debian / Ubuntu）
           \`\`\`bash
           # 普通包：装完即用，首次启动联网自动下载识别模型
           sudo dpkg -i livetrans_${VERSION}_all_online.deb
           # 完全离线包：模型已内置，装完无需联网（体积约 200MB+）
           sudo dpkg -i livetrans_${VERSION}_all_offline.deb
           \`\`\`
-
           依赖缺失时执行 \`sudo apt -f install\`；pip 侧依赖：
           \`/usr/share/doc/livetrans/install-python-deps.sh\`
 
           图形化安装向导：应用菜单里的「LiveTrans 安装向导」，或终端执行 \`livetrans-installer\`
+
+          ### Windows
+          \`\`\`powershell
+          # 安装器：双击 LiveTrans-${VERSION}-setup.exe，按向导安装（推荐）
+          # 便携版：解压后直接运行 LiveTrans.exe
+          Expand-Archive LiveTrans-${VERSION}-portable.zip -DestinationPath LiveTrans
+          .\LiveTrans\LiveTrans.exe
+          \`\`\`
+          安装器装到 Program Files；config/keys/模型等用户数据自动放
+          %LOCALAPPDATA%\\LiveTrans，卸载重装不丢失。
 
           详细说明见 [README](https://github.com/Martin031128/Livetrans#安装)。
           EOF
@@ -87,10 +176,10 @@ jobs:
           # 所以这里分两种情形：已存在就替换安装包 + 更新说明，不存在才创建。
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME 已存在 → 更新安装包与说明"
-            gh release upload "$GITHUB_REF_NAME" dist/*.deb dist/SHA256SUMS --clobber
+            gh release upload "$GITHUB_REF_NAME" release/* --clobber
             gh release edit "$GITHUB_REF_NAME" --title "LiveTrans $VERSION" --notes-file /tmp/notes.md
           else
             echo "Release $GITHUB_REF_NAME 不存在 → 新建"
-            gh release create "$GITHUB_REF_NAME" dist/*.deb dist/SHA256SUMS \
+            gh release create "$GITHUB_REF_NAME" release/* \
               --title "LiveTrans $VERSION" --notes-file /tmp/notes.md
           fi
