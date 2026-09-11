@@ -156,7 +156,8 @@ Installed-Size: $INSTALLED
 Depends: python3 (>= 3.10), python3-tk, python3-numpy, python3-yaml, python3-gi, gir1.2-gtk-3.0, gir1.2-pango-1.0, python3-cairo, pulseaudio-utils, libportaudio2
 Recommends: fonts-noto-cjk, python3-pip
 Suggests: ollama
-Maintainer: LiveTrans <livetrans@localhost>
+Maintainer: Martin031128 <Martin031128@users.noreply.github.com>
+Homepage: https://github.com/Martin031128/Livetrans
 Description: 实时语音翻译与双语字幕（麦克风 + 系统声音）
  LiveTrans 捕获麦克风与系统播放的声音，本地识别（SenseVoice）后经 LLM 翻译，
  在主字幕窗与悬浮字幕外挂上显示双语字幕；含图形控制台、会话总结与对话助手。

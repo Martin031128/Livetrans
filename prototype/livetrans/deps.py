@@ -12,7 +12,7 @@ import shutil
 
 PIP_FIX = "pip install -r requirements.txt"
 APT_FIX = ("sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-pango-1.0 "
-           "python3-cairo pulseaudio-utils")
+           "python3-cairo pulseaudio-utils libportaudio2")
 
 _PIP_NEEDS = {"numpy": "numpy", "sounddevice": "sounddevice",
               "yaml": "PyYAML", "openai": "openai",
@@ -40,6 +40,22 @@ def missing_speaker_deps() -> list[str]:
     if not _has("sherpa_onnx"):
         return ["sherpa-onnx（pip install sherpa-onnx）"]
     return []
+
+
+def missing_system_deps() -> list[str]:
+    """系统级依赖：pip 包装好了，但底层动态库缺失时 import 才报错。
+
+    目前只有一项：PortAudio（sounddevice 的底层库，属 libportaudio2）。
+    find_spec 查不出来（包是存在的），必须真的 import 一次。
+    """
+    missing: list[str] = []
+    try:
+        import sounddevice  # noqa: F401
+    except OSError:
+        missing.append("libportaudio2（sounddevice 底层库）")
+    except ImportError:
+        pass                      # pip 包本身缺失由 missing_pip_deps 负责
+    return missing
 
 
 def missing_overlay_deps() -> list[str]:

@@ -6,6 +6,10 @@
 技术路线、决策记录与逐次改动日志见 [TECH_ROADMAP.md](TECH_ROADMAP.md)。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-39c5b8.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Martin031128/Livetrans?label=下载&color=39c5b8)](https://github.com/Martin031128/Livetrans/releases/latest)
+
+**下载安装包**：[Releases 页面](https://github.com/Martin031128/Livetrans/releases/latest)（`..._all_online.deb` 普通版 / `..._all_offline.deb` 完全离线版）
+源代码仓库：<https://github.com/Martin031128/Livetrans>
 
 ## 功能
 
@@ -90,6 +94,13 @@ bash packaging/install.sh --remove-local      # 删识别/声纹模型，并 oll
 - 控制台「翻译后端 → 本地模型」卡片里也会显示当前占用与这条命令
 
 ### 方式二：Debian / Ubuntu 安装包
+
+**普通用户请直接从 [Releases](https://github.com/Martin031128/Livetrans/releases/latest) 下载**（无需自己编译）：
+
+- `livetrans_<版本>_all_online.deb` —— 普通包（首次启动联网自动下载识别模型）
+- `livetrans_<版本>_all_offline.deb` —— 完全离线包（约 236MB，识别/声纹模型已内置，装完即用）
+
+自己编译打包：
 
 ```bash
 cd prototype

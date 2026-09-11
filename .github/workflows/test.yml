@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:            # 也能在 Actions 页面手动点 "Run workflow"
 
 jobs:
   selfcheck:
@@ -14,7 +15,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-tk python3-gi gir1.2-gtk-3.0 \
-            gir1.2-pango-1.0 python3-cairo pulseaudio-utils fonts-noto-cjk xvfb
+            gir1.2-pango-1.0 python3-cairo pulseaudio-utils fonts-noto-cjk xvfb \
+            libportaudio2 libsndfile1
       - name: Python 依赖
         run: |
           python3 -m pip install --upgrade pip

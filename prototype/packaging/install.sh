@@ -135,8 +135,8 @@ note "以上都可以稍后单独安装或删除：bash packaging/install.sh --r
 # ---- 1) 系统依赖 ----
 step "1/4 系统依赖检查"
 SYS_MISS="$(py '
-from livetrans.deps import missing_overlay_deps
-d = missing_overlay_deps()
+from livetrans.deps import missing_overlay_deps, missing_system_deps
+d = missing_overlay_deps() + missing_system_deps()
 print(" ".join(d))' )"
 if [ -z "$SYS_MISS" ]; then
     ok "Tk / GTK3 / parec / 字体等系统组件齐备"

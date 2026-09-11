@@ -38,7 +38,8 @@ import yaml
 
 from livetrans.capture import list_monitor_sources
 from livetrans.config import load_config
-from livetrans.deps import PIP_FIX, missing_pip_deps
+from livetrans.deps import (APT_FIX, PIP_FIX, missing_pip_deps,
+                            missing_system_deps)
 from livetrans.keys import (KEYS_PATH, add_history, detect_provider,
                             key_env_overlay, load_any, load_history,
                             mask_key, merged_env, save_keys)
@@ -514,7 +515,7 @@ class Launcher(KeyUIMixin, BackendPageMixin, AudioPageMixin,
             return
         if not self._apply_and_save():
             return
-        missing = missing_pip_deps()               # 依赖自检：给出修复命令
+        missing = missing_pip_deps() + missing_system_deps()   # 依赖自检：给修复命令
         if missing:
             self.set_status(f"缺少 Python 依赖：{'、'.join(missing)}", BAD)
             messagebox.showerror(

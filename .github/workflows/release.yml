@@ -3,6 +3,7 @@ name: release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:            # 手动试打包（不打 tag 也能跑）
 
 permissions:
   contents: write
@@ -13,13 +14,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 解析版本号（tag v1.2.3 → 1.2.3）
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: 解析版本号（tag v1.2.3 → 1.2.3；手动触发则读 livetrans/__init__.py）
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            V=$(sed -n 's/^__version__ = "\(.*\)".*/\1/p' prototype/livetrans/__init__.py | head -1)
+            echo "VERSION=${V:-0.0.0-dev}" >> "$GITHUB_ENV"
+          fi
+          echo "本次将打包版本：$(grep ^VERSION= "$GITHUB_ENV" | tail -1)"
 
       - name: 打包环境
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev rsync
+          sudo apt-get install -y dpkg-dev rsync libportaudio2 libsndfile1
 
       - name: Python 依赖（下载模型需要）
         run: python3 -m pip install --upgrade pip && python3 -m pip install -r prototype/requirements.txt
@@ -43,7 +51,17 @@ jobs:
         run: |
           cd dist && sha256sum *.deb > SHA256SUMS && cat SHA256SUMS
 
-      - name: 创建 Release 并附上安装包
+      - name: 手动触发时：包作为 Actions 产物（Artifacts）供下载
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: livetrans-${{ env.VERSION }}-deb
+          path: |
+            prototype/dist/*.deb
+            prototype/dist/SHA256SUMS
+
+      - name: 打 tag 时：创建 Release 并附上安装包
+        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: |

@@ -36,29 +36,33 @@ def two_screens():
 
 ov._desktop_bounds = two_screens
 ov.width, ov.height = 1200, 120
-ov.manual_pos = (mon.x + mon.width + 200, mon.y + 300)         # 副屏区域
+two = two_screens()
+# 注意：断言一律基于"模拟出来的桌面范围 two"，不基于鼠标所在的那块屏——
+# 鼠标在哪块屏会让 ov.mon 变来变去，那种断言会随环境飘（曾经在双屏机上误报）
+inside = (two.x + two.width - ov.width - 50, two.y + 300)      # 桌面内（靠右）
+ov.manual_pos = inside
 ov._place()
 # 用 _place() 里算出的目标位置断言（窗口未跑主循环时 move() 是异步的，
 # get_position() 可能还是旧值）
 x, y = ov._last_geom[0], ov._last_geom[1]
-print(f"拖到副屏 -> 目标位置 ({x},{y})，期望 ({ov.manual_pos[0]},{ov.manual_pos[1]})")
-assert x >= mon.x + mon.width, f"被钳回主屏了：x={x}"
-assert x == ov.manual_pos[0] and y == ov.manual_pos[1]
+print(f"拖到桌面右侧 -> 目标位置 ({x},{y})，期望 {inside}")
+assert (x, y) == inside, "落在桌面内的手动位置必须原样保留"
+assert x > two.x + two.width // 2, "应停在桌面的右半边（跨过原屏边界）"
 
 # 3) 拖到桌面之外仍要钳回（不能拖丢）
-ov.manual_pos = (mon.x + mon.width * 3, mon.y - 5000)
+ov.manual_pos = (two.x + two.width + 3000, two.y - 5000)
 ov._place()
 x, y = ov._last_geom[0], ov._last_geom[1]
 print(f"拖出桌面 -> 钳回 ({x},{y})")
-assert x <= two_screens().x + two_screens().width - ov.width
-assert y >= two_screens().y
+assert two.x <= x <= max(two.x, two.x + two.width - ov.width)
+assert two.y <= y <= max(two.y, two.y + two.height - ov.height)
 
 # 4) 回到真实桌面范围：越界仍钳在"所有屏的并集"内
 ov._desktop_bounds = real_bounds
-ov.manual_pos = (mon.x + mon.width * 9, mon.y - 9000)
+d = real_bounds()
+ov.manual_pos = (d.x + d.width + 9999, d.y - 9000)
 ov._place()
 x, y = ov._last_geom[0], ov._last_geom[1]
-d = real_bounds()
 print(f"越界钳制 -> ({x},{y})，桌面 {d.width}x{d.height} @({d.x},{d.y})")
 assert d.x <= x <= max(d.x, d.x + d.width - ov.width)
 assert d.y <= y <= max(d.y, d.y + d.height - ov.height)
