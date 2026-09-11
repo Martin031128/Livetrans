@@ -83,5 +83,14 @@ jobs:
 
           详细说明见 [README](https://github.com/Martin031128/Livetrans#安装)。
           EOF
-          gh release create "$GITHUB_REF_NAME" dist/*.deb dist/SHA256SUMS \
-            --title "LiveTrans $VERSION" --notes-file /tmp/notes.md
+          # 同一个 tag 重新推过时 Release 已经存在（create 会直接报错），
+          # 所以这里分两种情形：已存在就替换安装包 + 更新说明，不存在才创建。
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME 已存在 → 更新安装包与说明"
+            gh release upload "$GITHUB_REF_NAME" dist/*.deb dist/SHA256SUMS --clobber
+            gh release edit "$GITHUB_REF_NAME" --title "LiveTrans $VERSION" --notes-file /tmp/notes.md
+          else
+            echo "Release $GITHUB_REF_NAME 不存在 → 新建"
+            gh release create "$GITHUB_REF_NAME" dist/*.deb dist/SHA256SUMS \
+              --title "LiveTrans $VERSION" --notes-file /tmp/notes.md
+          fi
