@@ -12,7 +12,7 @@ jobs:
   build-deb:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 解析版本号（tag v1.2.3 → 1.2.3；手动触发则读 livetrans/__init__.py）
         run: |
@@ -60,24 +60,28 @@ jobs:
             prototype/dist/*.deb
             prototype/dist/SHA256SUMS
 
-      - name: 打 tag 时：创建 Release 并附上安装包
+      - name: 打 tag 时：创建 Release 并附上安装包（用自带 gh CLI，无第三方依赖）
         if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            prototype/dist/*.deb
-            prototype/dist/SHA256SUMS
-          generate_release_notes: true
-          body: |
-            ## 安装
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: prototype
+        run: |
+          cat > /tmp/notes.md <<EOF
+          ## 安装
 
-            ```bash
-            # 普通包：首次启动联网自动下载识别模型
-            sudo dpkg -i livetrans_${{ env.VERSION }}_all_online.deb
-            # 完全离线包（约 236MB，装完无需联网）
-            sudo dpkg -i livetrans_${{ env.VERSION }}_all_offline.deb
-            ```
+          \`\`\`bash
+          # 普通包：首次启动联网自动下载识别模型（约 240MB）
+          sudo dpkg -i livetrans_${VERSION}_all_online.deb
+          # 完全离线包（约 236MB，模型内置，装完无需联网）
+          sudo dpkg -i livetrans_${VERSION}_all_offline.deb
+          \`\`\`
 
-            依赖缺失时：`sudo apt -f install`；pip 侧依赖：
-            `/usr/share/doc/livetrans/install-python-deps.sh`
-            图形化安装向导：应用菜单里的「LiveTrans 安装向导」或 `livetrans-installer`
+          依赖缺失时执行 \`sudo apt -f install\`；pip 侧依赖：
+          \`/usr/share/doc/livetrans/install-python-deps.sh\`
+
+          图形化安装向导：应用菜单里的「LiveTrans 安装向导」，或终端执行 \`livetrans-installer\`
+
+          详细说明见 [README](https://github.com/Martin031128/Livetrans#安装)。
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/*.deb dist/SHA256SUMS \
+            --title "LiveTrans $VERSION" --notes-file /tmp/notes.md

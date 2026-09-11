@@ -10,7 +10,7 @@ jobs:
   selfcheck:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: 系统依赖（Tk / GTK3 / 音频工具 / 中文字体 / 虚拟显示）
         run: |
           sudo apt-get update

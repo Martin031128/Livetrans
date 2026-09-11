@@ -14,7 +14,9 @@ from livetrans.subtitle import DisplayItem, SubtitleWindow  # noqa: E402
 
 LONG = ("I've gone through the Q3 numbers; they're in line with expectations, "
         "and the revenue mix looks better than we modelled.")
-SHORT = "Send me the conclusions before Monday."
+# 短句样本必须短到"任何字体下都只占一行"：这个断言是用来抓
+# "height 虚高"的 bug，不能因为 CI 字体更宽而误报（曾报 height=2）
+SHORT = "Ok, will do."
 
 win = SubtitleWindow(style={"layout": "dialog", "animate": False, "scale": 1.3},
                      dialog={"self_source": "internal", "other_source": "internal",

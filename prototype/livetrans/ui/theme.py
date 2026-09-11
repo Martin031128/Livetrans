@@ -97,6 +97,46 @@ def _check_rows(selected: bool, color: str, bg: str, size: int = 20) -> list[lis
     return rows
 
 
+SPINBOX_ARROW = 16          # 实测选出的箭头尺寸（供自检/测试观察）
+
+
+def _align_spinbox(st, root) -> int:
+    """让 Spinbox 与 Combobox/Entry 等高：运行时实测箭头尺寸 + 上下内边距。
+
+    Spinbox 高 = max(2 × arrowsize, 文字高) + 2 × pad_y，而 Combobox/Entry 高
+    = 文字高 + 2 × pad_y —— 两个量（箭头、内边距）都得动才凑得上：
+    只调箭头到不了更低（下限是"文字高 + 内边距"）。所以这里联合试，
+    命中完全相等就立刻停（绝大多数机器一两次就够）。
+    """
+    global SPINBOX_ARROW
+    probe = ttk.Combobox(root, width=8, values=["x"], state="readonly")
+    probe.update_idletasks()
+    target = probe.winfo_reqheight()
+    probe.destroy()
+
+    # 常见取值优先试（本机立刻命中），不行再全试一遍
+    pads = (6, 5, 7, 4, 8, 3, 2, 1, 0)
+    arrows = (16, 14, 18, 12, 20, 10, 22, 8, 24, 6)
+    best = (6, 16, 999)
+    for pad_y in pads:
+        for arrow in arrows:
+            st.configure("TSpinbox", arrowsize=arrow, padding=(8, pad_y))
+            p = ttk.Spinbox(root, from_=0, to=1, width=4)
+            p.update_idletasks()
+            diff = abs(p.winfo_reqheight() - target)
+            p.destroy()
+            if diff < best[2]:
+                best = (pad_y, arrow, diff)
+            if diff == 0:
+                st.configure("TSpinbox", arrowsize=arrow, padding=(8, pad_y))
+                SPINBOX_ARROW = arrow
+                return arrow
+    pad_y, arrow, _ = best
+    st.configure("TSpinbox", arrowsize=arrow, padding=(8, pad_y))
+    SPINBOX_ARROW = arrow
+    return arrow
+
+
 def apply_theme(root, ui_font: str, mono_font: str) -> ttk.Style:
     """深色主题 + 自绘指示器（原 launcher._setup_style 原样迁移）。"""
     # Combobox 的下拉列表是经典 tk Listbox，须用 option_add 上色
@@ -180,9 +220,10 @@ def apply_theme(root, ui_font: str, mono_font: str) -> ttk.Style:
         st.map(w, fieldbackground=[("readonly", FIELD), ("disabled", PANEL)],
                foreground=[("disabled", DIM)],
                arrowcolor=[("disabled", DIM)])
-    # Spinbox 的高度由箭头尺寸决定（arrowsize 20 → 44px，比 Combobox/Entry 高 8px，
-    # 同一行的控件就歪了）→ 16 让它正好落在 36px，与下拉/输入框齐平
-    st.configure("TSpinbox", arrowsize=16, padding=(8, 6))
+    # Spinbox 的高度由「箭头尺寸」决定，而 Combobox/Entry 的高度由字体+padding 决定：
+    # 写死 arrowsize 只是在本机字体下凑巧等高 —— 换个字体/DPI 就错开几像素
+    # （CI 上就报过 输入域高度 [33, 36, 33]）。这里现场量一次再定箭头尺寸。
+    _align_spinbox(st, root)
     # 滚动条：默认 ttk 是浅灰，放在深色面板上很扎眼 → 统一主题化
     for w in ("Vertical.TScrollbar", "Horizontal.TScrollbar"):
         st.configure(w, background=PANEL_2, troughcolor=FIELD,

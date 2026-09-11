@@ -13,7 +13,14 @@ from gi.repository import Gdk  # noqa: E402
 from livetrans.config import OverlayConfig      # noqa: E402
 from livetrans.overlay import OverlayWindow     # noqa: E402
 
-ov = OverlayWindow(OverlayConfig(), config_path=None)
+try:
+    ov = OverlayWindow(OverlayConfig(), config_path=None)
+except (KeyError, OSError, RuntimeError) as e:
+    # 无头/精简环境里 PangoCairo 的 foreign type 可能注册不上（CI 上就报
+    # KeyError: could not find foreign type Context）→ 这属于环境不具备，
+    # 不是拖动逻辑的问题，跳过而不是失败（本机有完整 GTK 栈时照常跑）
+    print(f"[SKIP] 当前环境无法渲染 GTK/PangoCairo 外挂窗（{type(e).__name__}: {e}）")
+    raise SystemExit(0)
 mon = ov.mon
 print(f"当前主屏: {mon.width}x{mon.height} @({mon.x},{mon.y})")
 

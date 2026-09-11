@@ -110,8 +110,23 @@ def _rounded_path(cr, x: float, y: float, w: float, h: float, r: float) -> None:
     cr.close_path()
 
 
+def _pango_layout(cr):
+    """PangoCairo.create_layout 的包装：foreign type 没注册时给可操作的提示。
+
+    报错原文是 `KeyError: 'could not find foreign type Context'`，
+    对用户毫无信息量 —— 通常是 python3-cairo / gir1.2-pango-1.0 缺失或版本不匹配。
+    """
+    try:
+        return PangoCairo.create_layout(cr)
+    except (KeyError, TypeError, AttributeError) as e:
+        raise RuntimeError(
+            "PangoCairo 不可用（cairo 的 foreign type 未注册）：请确认已安装 "
+            "python3-cairo 与 gir1.2-pango-1.0（apt），"
+            "并避免 pip 里的 pycairo 与系统 cairo 混用") from e
+
+
 def _layout(cr, text: str, size: int, width: int):
-    lay = PangoCairo.create_layout(cr)
+    lay = _pango_layout(cr)
     lay.set_text(text or " ", -1)
     lay.set_width(int(max(20, width) * Pango.SCALE))
     lay.set_alignment(Pango.Alignment.CENTER)

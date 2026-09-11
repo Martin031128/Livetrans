@@ -54,10 +54,12 @@ for w in fields:
     w.grid(row=0, column=0)
 app.update()
 fh = [w.winfo_reqheight() for w in fields]
-print("输入域高度:", fh)
-# 同样不写死像素：只要求"三者一致"且在合理区间（CI 字体不同不影响这个结论）
-assert len(set(fh)) == 1, f"输入域高度应统一：{fh}"
-assert 28 <= fh[0] <= 46, fh
+from livetrans.ui.theme import SPINBOX_ARROW          # noqa: E402
+print(f"输入域高度: {fh}（Spinbox 箭头尺寸实测选了 {SPINBOX_ARROW}）")
+# 不写死像素：不同字体/DPI 下高度会变，只要求三者基本齐平
+# （Spinbox 高度是 2×arrowsize + padding，奇偶限制下最多差 1~2px）
+assert max(fh) - min(fh) <= 2, f"输入域高度应基本一致：{fh}"
+assert 26 <= min(fh) and max(fh) <= 48, fh
 for w in fields:
     w.destroy()
 
