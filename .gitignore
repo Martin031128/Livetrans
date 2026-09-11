@@ -1,0 +1,32 @@
+# ---- 密钥与本地数据（绝不提交）----
+prototype/keys.yaml
+prototype/keys.env
+prototype/*.env
+prototype/api_history.yaml
+prototype/config.yaml
+prototype/glossary.yaml
+prototype/sessions/
+prototype/run.log
+prototype/run.log.*
+prototype/models/
+
+# ---- 打包产物 ----
+prototype/dist/
+*.deb
+*.AppImage
+*.tar.gz
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.part
+.venv/
+venv/
+
+# ---- 编辑器 / 系统 ----
+.codebuddy/
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store

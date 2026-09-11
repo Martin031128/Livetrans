@@ -1,0 +1,28 @@
+# ---- Python 依赖（pip install -r requirements.txt）----
+numpy>=1.24            # 音频/张量处理
+sounddevice>=0.4.6     # PortAudio 绑定：麦克风采集与设备枚举
+webrtcvad-wheels>=2.0.14  # VAD 断句（静音检测）
+funasr_onnx>=0.4.0     # SenseVoice 本地语音识别（ONNX 推理）
+PyYAML>=6.0            # 配置/术语表/API 历史
+openai>=1.30           # OpenAI 兼容客户端（翻译/总结/对话，一套协议多家服务商）
+
+# ---- 系统依赖（apt，字幕外挂与系统音频需要；缺件时控制台会提示）----
+# python3-tk                         # 控制台与主字幕窗（Tkinter）
+# python3-gi gir1.2-gtk-3.0          # 字幕外挂（GTK3 逐像素透明）
+# gir1.2-pango-1.0 python3-cairo     # 文字排版与绘图
+# pulseaudio-utils                   # parec：抓系统播放声音（monitor 源）
+# fonts-noto-cjk                     # 中文显示字体
+#
+# 一键安装：
+#   sudo apt install python3-tk python3-gi gir1.2-gtk-3.0 gir1.2-pango-1.0 \
+#                    python3-cairo pulseaudio-utils fonts-noto-cjk
+#
+# ---- 可选：声纹角色标注（多人会议区分说话人；不装则不显示 S1/S2）----
+# pip install sherpa-onnx
+# 模型（28MB，CAM++ 中英双语）放到 models/speaker/：
+#   https://hf-mirror.com/csukuangfj/speaker-embedding-models
+#   3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx
+
+# ---- 可选：本地翻译模型服务（不装则用云端 API）----
+# Ollama        https://ollama.com   （控制台可自动拉起服务）
+#   ollama pull qwen3:4b-instruct

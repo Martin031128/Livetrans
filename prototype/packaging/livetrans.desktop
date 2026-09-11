@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=LiveTrans
+GenericName=实时语音翻译
+Comment=捕获系统与麦克风音频，实时双语字幕、翻译与会话总结
+Exec=livetrans
+Icon=livetrans
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+Keywords=livetrans;translate;subtitle;asr;翻译;字幕;语音;
+StartupWMClass=livetrans

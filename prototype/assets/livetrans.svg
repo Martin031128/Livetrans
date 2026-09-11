@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- LiveTrans 图标：双色声波（外=麦克风绿 / 内=系统蓝 / 中=翻译信号青） -->
+  <rect width="128" height="128" rx="28" fill="#141824"/>
+  <g stroke-linecap="round" stroke-width="10">
+    <line x1="30"  y1="52" x2="30"  y2="76"  stroke="#a6e3a1"/>
+    <line x1="46"  y1="38" x2="46"  y2="90"  stroke="#89b4fa"/>
+    <line x1="62"  y1="26" x2="62"  y2="102" stroke="#39c5b8"/>
+    <line x1="78"  y1="38" x2="78"  y2="90"  stroke="#39c5b8"/>
+    <line x1="94"  y1="52" x2="94"  y2="76"  stroke="#89b4fa"/>
+    <line x1="110" y1="60" x2="110" y2="68"  stroke="#a6e3a1"/>
+  </g>
+</svg>

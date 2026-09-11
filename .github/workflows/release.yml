@@ -1,0 +1,65 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 解析版本号（tag v1.2.3 → 1.2.3）
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: 打包环境
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev rsync
+
+      - name: Python 依赖（下载模型需要）
+        run: python3 -m pip install --upgrade pip && python3 -m pip install -r prototype/requirements.txt
+
+      - name: ① 普通包（不含模型，首次启动自动下载）
+        working-directory: prototype
+        run: |
+          bash packaging/build_deb.sh
+          mv dist/livetrans_${VERSION}_all.deb dist/livetrans_${VERSION}_all_online.deb
+
+      - name: ② 完全离线包（先下识别/声纹模型，再打进去）
+        working-directory: prototype
+        run: |
+          python3 -c "from livetrans.asr import preload_model; preload_model()"
+          python3 -c "from livetrans.speaker import ensure_speaker_model; ensure_speaker_model(log=print)"
+          bash packaging/build_deb.sh --offline
+          mv dist/livetrans_${VERSION}_all.deb dist/livetrans_${VERSION}_all_offline.deb
+
+      - name: 校验和
+        working-directory: prototype
+        run: |
+          cd dist && sha256sum *.deb > SHA256SUMS && cat SHA256SUMS
+
+      - name: 创建 Release 并附上安装包
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            prototype/dist/*.deb
+            prototype/dist/SHA256SUMS
+          generate_release_notes: true
+          body: |
+            ## 安装
+
+            ```bash
+            # 普通包：首次启动联网自动下载识别模型
+            sudo dpkg -i livetrans_${{ env.VERSION }}_all_online.deb
+            # 完全离线包（约 236MB，装完无需联网）
+            sudo dpkg -i livetrans_${{ env.VERSION }}_all_offline.deb
+            ```
+
+            依赖缺失时：`sudo apt -f install`；pip 侧依赖：
+            `/usr/share/doc/livetrans/install-python-deps.sh`
+            图形化安装向导：应用菜单里的「LiveTrans 安装向导」或 `livetrans-installer`

@@ -1,0 +1,24 @@
+name: test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  selfcheck:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 系统依赖（Tk / GTK3 / 音频工具 / 中文字体 / 虚拟显示）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-gi gir1.2-gtk-3.0 \
+            gir1.2-pango-1.0 python3-cairo pulseaudio-utils fonts-noto-cjk xvfb
+      - name: Python 依赖
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r prototype/requirements.txt
+      - name: 自检 + 全部专项测试（xvfb 提供虚拟显示）
+        working-directory: prototype
+        run: xvfb-run -a bash tests/run.sh
