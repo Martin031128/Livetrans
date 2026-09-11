@@ -98,7 +98,7 @@ bash packaging/install.sh --remove-local      # 删识别/声纹模型，并 oll
 **普通用户请直接从 [Releases](https://github.com/Martin031128/Livetrans/releases/latest) 下载**（无需自己编译）：
 
 - `livetrans_<版本>_all_online.deb` —— 普通包（首次启动联网自动下载识别模型）
-- `livetrans_<版本>_all_offline.deb` —— 完全离线包（约 236MB，识别/声纹模型已内置，装完即用）
+- `livetrans_<版本>_all_offline.deb` —— 完全离线包（识别/声纹模型已内置，装完即用，体积约 200MB+）
 
 自己编译打包：
 

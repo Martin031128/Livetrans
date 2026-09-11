@@ -70,9 +70,9 @@ jobs:
           ## 安装
 
           \`\`\`bash
-          # 普通包：首次启动联网自动下载识别模型（约 240MB）
+          # 普通包：装完即用，首次启动联网自动下载识别模型
           sudo dpkg -i livetrans_${VERSION}_all_online.deb
-          # 完全离线包（约 236MB，模型内置，装完无需联网）
+          # 完全离线包：模型已内置，装完无需联网（体积约 200MB+）
           sudo dpkg -i livetrans_${VERSION}_all_offline.deb
           \`\`\`
 
