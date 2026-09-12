@@ -218,6 +218,12 @@ translate/
 
 ## 8. 附录：开发日志
 
+**追记（同日）**：①Windows 包改为**离线版**（构建前预下载识别/声纹模型，
+便携 zip 389MB / 安装器 338MB，替代在线版；在线版今后不再发布）；
+②踩坑记录：**删除远端标签重推会把已发布的 Release 变孤儿/草稿**（公开列表
+不可见）→ 两个 release job 的更新路径强制 `gh release edit --draft=false`；
+③Inno 向导默认装 {autopf}（C 盘 Program Files）但"选择安装位置"页可改任意盘符。
+
 ### 2026-09-12（二十七）：双平台独立发版 + Windows CI 全绿
 
 **双平台独立 Release**（用户需求：Linux/Windows 版本号不互通、命名带平台后缀）：
