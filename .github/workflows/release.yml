@@ -1,24 +1,34 @@
 name: release
 
+# 双平台独立发版：版本号互不相通，Release 标题与产物名都带平台后缀。
+#
+# 触发方式：
+#   - 推送标签：v1.2.3-linux → 只构建/发布 Linux；v1.2.3-win → 只构建/发布 Windows
+#   - 手动 workflow_dispatch：两平台各用各的 __version__ 试打包（只出 artifact，不发 Release）
+#
+# 版本号来源：tag 触发时去掉平台后缀（v1.0.0-win → 1.0.0）；
+# 手动触发时各读各的 livetrans/__init__.py（platforms/linux 与 platforms/windows 独立）。
+
 on:
   push:
-    tags: ["v*"]
-  workflow_dispatch:            # 手动试打包（不打 tag 也能跑）
+    tags: ["v*-linux", "v*-win"]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+# ---------------- Linux（*-linux） ----------------
 jobs:
-  # ---------- Linux 版：产出 deb（普通包 + 完全离线包）----------
   build-linux:
+    if: github.event_name == 'workflow_dispatch' || endsWith(github.ref_name, '-linux')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
 
-      - name: 解析版本号（tag v1.2.3 → 1.2.3；手动触发则读 livetrans/__init__.py）
+      - name: 解析版本号（tag 去掉 -linux 后缀；否则读 linux 版 __version__）
         run: |
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+            echo "VERSION=${GITHUB_REF_NAME%-linux}" >> "$GITHUB_ENV"
           else
             V=$(sed -n 's/^__version__ = "\(.*\)".*/\1/p' platforms/linux/livetrans/__init__.py | head -1)
             echo "VERSION=${V:-0.0.0-dev}" >> "$GITHUB_ENV"
@@ -55,13 +65,60 @@ jobs:
       - name: 产物（Actions Artifacts）
         uses: actions/upload-artifact@v4
         with:
-          name: livetrans-linux-${{ env.VERSION }}
+          name: livetrans-linux
           path: |
             platforms/linux/dist/*.deb
             platforms/linux/dist/SHA256SUMS
 
-  # ---------- Windows 版：产出安装器 + 便携 zip ----------
+  release-linux:
+    if: github.event_name == 'push' && endsWith(github.ref_name, '-linux')
+    needs: build-linux
+    runs-on: ubuntu-22.04
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: 解析版本号
+        run: echo "VERSION=${GITHUB_REF_NAME%-linux}" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: livetrans-linux
+          path: release
+
+      - name: 创建/更新 Linux Release（仅 Linux 产物）
+        run: |
+          ls -lh release
+          cat > /tmp/notes.md <<EOF
+          ## LiveTrans Linux ${VERSION}
+
+          ### 安装（Debian / Ubuntu）
+          \`\`\`bash
+          # 普通包：装完即用，首次启动联网自动下载识别模型
+          sudo dpkg -i livetrans_${VERSION}_all_online.deb
+          # 完全离线包：模型已内置，装完无需联网（体积约 200MB+）
+          sudo dpkg -i livetrans_${VERSION}_all_offline.deb
+          \`\`\`
+          依赖缺失时执行 \`sudo apt -f install\`；pip 侧依赖：
+          \`/usr/share/doc/livetrans/install-python-deps.sh\`
+
+          图形化安装向导：应用菜单里的「LiveTrans 安装向导」
+          详细说明见 [README](https://github.com/Martin031128/Livetrans#安装)。
+          EOF
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在 → 更新安装包与说明"
+            gh release upload "$TAG" release/* --clobber
+            gh release edit "$TAG" --title "LiveTrans Linux ${VERSION}" --notes-file /tmp/notes.md
+          else
+            echo "Release $TAG 不存在 → 新建"
+            gh release create "$TAG" release/* \
+              --title "LiveTrans Linux ${VERSION}" --notes-file /tmp/notes.md
+          fi
+
+# ---------------- Windows（*-win） ----------------
   build-windows:
+    if: github.event_name == 'workflow_dispatch' || endsWith(github.ref_name, '-win')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -69,11 +126,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 解析版本号
+      - name: 解析版本号（tag 去掉 -win 后缀；否则读 windows 版 __version__）
         shell: pwsh
         run: |
           if ("${{ github.ref_type }}" -eq "tag") {
-            $v = "${{ github.ref_name }}".TrimStart("v")
+            $v = "${{ github.ref_name }}".TrimEnd("win").TrimEnd("-")
           } else {
             $m = Select-String -Path "platforms/windows/livetrans/__init__.py" -Pattern '^__version__ = "(.*)"'
             $v = if ($m) { $m.Matches[0].Groups[1].Value } else { "0.0.0-dev" }
@@ -95,9 +152,9 @@ jobs:
         shell: pwsh
         run: |
           Compress-Archive -Path "dist/LiveTrans/*" `
-            -DestinationPath "dist/LiveTrans-$env:VERSION-portable.zip" -Force
-          Get-FileHash "dist/LiveTrans-$env:VERSION-portable.zip" -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash.ToLower())  LiveTrans-$env:VERSION-portable.zip" } |
+            -DestinationPath "dist/LiveTrans-$env:VERSION-win-portable.zip" -Force
+          Get-FileHash "dist/LiveTrans-$env:VERSION-win-portable.zip" -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  LiveTrans-$env:VERSION-win-portable.zip" } |
             Out-File -FilePath "dist/SHA256SUMS-windows.txt" -Encoding ascii
 
       - name: 构建 Inno Setup 安装器（可选产物，失败不阻断 zip 发版）
@@ -113,73 +170,53 @@ jobs:
       - name: 产物（Actions Artifacts）
         uses: actions/upload-artifact@v4
         with:
-          name: livetrans-windows-${{ env.VERSION }}
+          name: livetrans-windows
           path: |
             platforms/windows/dist/*.zip
             platforms/windows/dist/*.exe
             platforms/windows/dist/SHA256SUMS-windows.txt
 
-  # ---------- 打 tag 时：合并两个平台的产物，创建同一个 Release ----------
-  release:
-    needs: [build-linux, build-windows]
-    if: github.ref_type == 'tag'
+  release-windows:
+    if: github.event_name == 'push' && endsWith(github.ref_name, '-win')
+    needs: build-windows
     runs-on: ubuntu-22.04
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v5
+      - name: 解析版本号
+        run: echo "VERSION=${GITHUB_REF_NAME%-win}" >> "$GITHUB_ENV"
 
       - uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          name: livetrans-windows
+          path: release
 
-      - name: 汇总产物
+      - name: 创建/更新 Windows Release（仅 Windows 产物）
         run: |
-          mkdir -p release
-          find artifacts -type f \( -name '*.deb' -o -name '*.zip' -o -name '*-setup.exe' -o -name 'SHA256SUMS*' \) \
-            -exec cp {} release/ \;
-          cd release && ls -lh
-          sha256sum *.deb *.zip *-setup.exe > SHA256SUMS 2>/dev/null || true
-          cat SHA256SUMS
-
-      - name: 创建/更新 Release（Linux + Windows 同一发行）
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          ls -lh release
           cat > /tmp/notes.md <<EOF
-          ## 安装
+          ## LiveTrans Windows ${VERSION}
 
-          ### Linux（Debian / Ubuntu）
-          \`\`\`bash
-          # 普通包：装完即用，首次启动联网自动下载识别模型
-          sudo dpkg -i livetrans_${VERSION}_all_online.deb
-          # 完全离线包：模型已内置，装完无需联网（体积约 200MB+）
-          sudo dpkg -i livetrans_${VERSION}_all_offline.deb
-          \`\`\`
-          依赖缺失时执行 \`sudo apt -f install\`；pip 侧依赖：
-          \`/usr/share/doc/livetrans/install-python-deps.sh\`
-
-          图形化安装向导：应用菜单里的「LiveTrans 安装向导」，或终端执行 \`livetrans-installer\`
-
-          ### Windows
+          ### 安装
           \`\`\`powershell
-          # 安装器：双击 LiveTrans-${VERSION}-setup.exe，按向导安装（推荐）
+          # 安装器：双击 LiveTrans-${VERSION}-win-setup.exe，按向导安装（推荐）
           # 便携版：解压后直接运行 LiveTrans.exe
-          Expand-Archive LiveTrans-${VERSION}-portable.zip -DestinationPath LiveTrans
+          Expand-Archive LiveTrans-${VERSION}-win-portable.zip -DestinationPath LiveTrans
           .\LiveTrans\LiveTrans.exe
           \`\`\`
-          安装器装到 Program Files；config/keys/模型等用户数据自动放
+          安装器装到 Program Files；config/keys/识别模型等用户数据自动放
           %LOCALAPPDATA%\\LiveTrans，卸载重装不丢失。
-
+          识别模型已随包内置（离线可用）；翻译需在控制台填入 API key。
           详细说明见 [README](https://github.com/Martin031128/Livetrans#安装)。
           EOF
-          # 同一个 tag 重新推过时 Release 已经存在（create 会直接报错），
-          # 所以这里分两种情形：已存在就替换安装包 + 更新说明，不存在才创建。
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME 已存在 → 更新安装包与说明"
-            gh release upload "$GITHUB_REF_NAME" release/* --clobber
-            gh release edit "$GITHUB_REF_NAME" --title "LiveTrans $VERSION" --notes-file /tmp/notes.md
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在 → 更新安装包与说明"
+            gh release upload "$TAG" release/* --clobber
+            gh release edit "$TAG" --title "LiveTrans Windows ${VERSION}" --notes-file /tmp/notes.md
           else
-            echo "Release $GITHUB_REF_NAME 不存在 → 新建"
-            gh release create "$GITHUB_REF_NAME" release/* \
-              --title "LiveTrans $VERSION" --notes-file /tmp/notes.md
+            echo "Release $TAG 不存在 → 新建"
+            gh release create "$TAG" release/* \
+              --title "LiveTrans Windows ${VERSION}" --notes-file /tmp/notes.md
           fi
