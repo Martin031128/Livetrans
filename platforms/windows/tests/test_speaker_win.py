@@ -59,14 +59,21 @@ def test_graceful_degradation():
 
     注意：本函数**不能输出 `[SKIP]` 字样** —— tests/run.py 只要在输出里看到
     `[SKIP]` 就把整个用例判为 SKIP，会掩盖同文件里其它 PASS 的结果。
+
+    CI 能联网，模型会自动下载成功——所以"模型缺失"用打桩制造：把
+    ensure_speaker_model 替换为返回 None（下载失败），确定性走降级路径。
     """
-    if speaker_ready():
-        print("[PASS] 本机声纹可用，降级路径不适用（跳过该项）")
-        return
-    tr = SpeakerTracker(SpeakerConfig(enabled=True), log=lambda m: None)
-    out = tr.assign(np.zeros(16000, np.float32), 16000)
-    assert out == "", f"依赖缺失时应返回空标签，实得 {out!r}"
-    print("[PASS] 依赖/模型缺失时优雅降级")
+    import livetrans.speaker as spk
+    real = spk.ensure_speaker_model
+    spk.ensure_speaker_model = lambda cfg, log: None      # 桩：模型不可用
+    try:
+        tr = SpeakerTracker(SpeakerConfig(enabled=True), log=lambda m: None)
+        out = tr.assign(np.zeros(16000, np.float32), 16000)
+        assert out == "", f"模型不可用时应返回空标签，实得 {out!r}"
+        assert not tr.available, "降级后 available 应为 False"
+    finally:
+        spk.ensure_speaker_model = real
+    print("[PASS] 依赖/模型缺失时优雅降级（打桩确定性验证）")
 
 
 def test_color_mapping():
