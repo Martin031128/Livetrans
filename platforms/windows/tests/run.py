@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -90,6 +91,14 @@ def run_case(path: Path) -> str:
     tail = out.strip().splitlines()[-8:]
     for ln in tail:
         print(f"    {ln}")
+    # 在 GitHub Actions 里额外打一条注解：失败原因直接进 check-run 注解，
+    # 注解是公开可读的（匿名 API 即可拉取），而日志本身要登录才能看
+    if os.environ.get("GITHUB_ACTIONS"):
+        msg = "%0A".join(
+            ln.replace("%", "%25").replace("\r", "")
+              .replace("::", "\\:\\:")
+            for ln in out.strip().splitlines()[-15:])
+        print(f"::error title=测试失败 {path.stem}::{msg}")
     return "FAIL"
 
 
@@ -124,6 +133,9 @@ def main(argv: list[str]) -> int:
         print("全部测试通过 ✓")
     else:
         print(f"有测试失败 ✗（{failed} 项）")
+        if os.environ.get("GITHUB_ACTIONS"):
+            print("::error title=测试套件失败::selfcheck 或专项测试未全部通过，"
+                  "见上方各 FAIL 项的注解")
     return 1 if failed else 0
 
 

@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -95,8 +96,12 @@ EXCLUDES = [
     # ---- B. 平台特定 / 不需要 ----
     # 其它 GUI 绑定（只用 PySide6 与 tkinter）
     "PyQt5", "PyQt6", "PySide2", "wx",
-    # 测试框架（打包产物不需要跑测试）
-    "pytest", "pip", "wheel",
+    # 测试框架（打包产物不需要跑测试）。
+    # ⚠ 经验（CI 实测）：**不要排除 pip / wheel** —— PyInstaller 的 setuptools
+    # hook 会把 vendored wheel 别名回顶层 wheel，顶层被排除后直接
+    # `ValueError: Target module "wheel" already imported as ExcludedModule`。
+    # 与上面"不要排除 setuptools"是同一类坑。
+    "pytest",
     "test", "tests", "unittest",
 ]
 
@@ -234,9 +239,24 @@ def build(portable: bool = True) -> int:
     cmd.append(str(entry))
 
     _log("开始打包：" + " ".join(cmd[:8]) + " ...")
-    r = subprocess.run(cmd, cwd=ROOT)
+    # 捕获输出：完整内容照旧进 CI 日志；失败时把末尾若干行打进 ::error 注解
+    # （注解公开可读，匿名 API 即可拉取——日志本身要登录才能看）
+    r = subprocess.run(cmd, cwd=ROOT, capture_output=True,
+                       text=True, encoding="utf-8", errors="replace")
+    if r.stdout:
+        print(r.stdout, flush=True)
+    if r.stderr:
+        print(r.stderr, file=sys.stderr, flush=True)
     if r.returncode != 0:
         _log(f"✖ PyInstaller 失败（exit {r.returncode}）")
+        tail = [ln for ln in (r.stdout + "\n" + r.stderr).splitlines()
+                if ln.strip()][-25:]
+        for ln in tail:
+            print(f"[build] {ln}")
+        if os.environ.get("GITHUB_ACTIONS"):
+            msg = "%0A".join(ln.replace("%", "%25").replace("::", "\\:\\:")
+                             for ln in tail)
+            print(f"::error title=PyInstaller 打包失败::{msg}")
         return r.returncode
 
     out = DIST / APP_NAME
