@@ -218,6 +218,36 @@ translate/
 
 ## 8. 附录：开发日志
 
+### 2026-09-12（二十七）：双平台独立发版 + Windows CI 全绿
+
+**双平台独立 Release**（用户需求：Linux/Windows 版本号不互通、命名带平台后缀）：
+- `release.yml` 重写：tag `v1.2.3-linux` 只构建/发布 Linux，`v1.2.3-win` 只构建/
+  发布 Windows；版本号 = tag 去后缀（手动触发时各读各平台的 `__version__`）；
+  Release 标题 "LiveTrans Linux/Windows v1.2.3"，产物名带 `-win` 后缀；
+- 首个 Windows Release 已发布：**LiveTrans Windows v1.0.0**
+  （便携 zip 153.6MB 在线版 + Inno 安装器 103.4MB + SHA256SUMS）；
+  旧 v1.0.0 Release（仅 Linux deb）保留不动。
+
+**Windows CI 三连修**（每个都是通过新增的 `::error` 注解远程定位的）：
+1. **wheel 排除炸打包**：`ValueError: Target module "wheel" already imported as
+   ExcludedModule` —— `--exclude-module wheel` 与 PyInstaller setuptools hook
+   冲突（venv 复现确认）；EXCLUDES 移除 pip/wheel（与"不要排除 setuptools"
+   同类坑，已在注释中警告）；
+2. **PYTHONUTF8 缺失**：runner 默认 cp1252，所有中文 print 直接
+   UnicodeEncodeError（测试/打包双中招）→ 两个 workflow 顶层加
+   `env: PYTHONUTF8: "1"`；
+3. **临时目录清理竞态**：test_fallback/test_router/test_mirror 的会话 jsonl
+   被 worker 占用 → `TemporaryDirectory(ignore_cleanup_errors=True)`；
+4. **声纹降级测试前提失效**：CI 联网导致模型自动下载成功，"缺模型返回空标签"
+   的前提不成立 → 改为打桩 `ensure_speaker_model` 返回 None 的确定性验证。
+
+**诊断机制（对齐 Linux 版 run.sh 的 ::error 注解）**：tests/run.py 与
+build_windows.py 在失败时把错误末尾行打进 `::error title=...::` 注解——
+注解走 check-runs API **匿名即可读**，彻底解决"日志要管理员权限才能拉"。
+
+**验证**：GitHub Actions test 工作流 **Linux + Windows 双平台 success**；
+release 工作流 success 且 Release 产物齐全。
+
 ### 2026-09-11（二十六）：死代码清扫（仅 Windows 版）
 
 方法：AST 收集全树定义（函数/类/方法）→ 全文本引用计数（注释/字符串提及
