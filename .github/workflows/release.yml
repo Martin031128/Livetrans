@@ -146,6 +146,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r platforms/windows/requirements.txt pyinstaller
 
+      - name: 预下载识别/声纹模型（打进离线包）
+        working-directory: platforms/windows
+        run: |
+          python -c "from livetrans.asr import preload_model; preload_model()"
+          python -c "from livetrans.speaker import ensure_speaker_model; ensure_speaker_model(log=print)"
+
       - name: 构建便携版（PyInstaller one-dir）
         working-directory: platforms/windows
         shell: pwsh
