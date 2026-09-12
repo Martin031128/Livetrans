@@ -40,4 +40,15 @@ jobs:
           python -m pip install -r platforms/windows/requirements.txt
       - name: 自检 + 全部专项测试
         working-directory: platforms/windows
-        run: python tests/run.py
+        shell: pwsh
+        run: |
+          python tests/run.py > ci_out.txt 2>&1
+          $code = $LASTEXITCODE
+          Get-Content ci_out.txt
+          if ($code -ne 0) {
+            # 失败详情写入 Job Summary（公开可见，便于远程诊断）
+            $tail = Get-Content ci_out.txt -Tail 60
+            ($tail -join "`n") |
+              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            exit $code
+          }

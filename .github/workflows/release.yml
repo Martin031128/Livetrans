@@ -145,7 +145,18 @@ jobs:
 
       - name: 构建便携版（PyInstaller one-dir）
         working-directory: platforms/windows
-        run: python packaging/build_windows.py --portable
+        shell: pwsh
+        run: |
+          python packaging/build_windows.py --portable > build_out.txt 2>&1
+          $code = $LASTEXITCODE
+          Get-Content build_out.txt -Tail 40
+          if ($code -ne 0) {
+            # 失败详情写入 Job Summary（公开可见，便于远程诊断）
+            $tail = Get-Content build_out.txt -Tail 100
+            ($tail -join "`n") |
+              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            exit $code
+          }
 
       - name: 打包便携 zip 与校验和
         working-directory: platforms/windows
