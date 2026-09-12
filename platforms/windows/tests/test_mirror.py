@@ -25,7 +25,7 @@ class FakeOverlay:
         self.status = text
 
 
-with tempfile.TemporaryDirectory() as td:
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
     log_dir = Path(td)
     first = log_dir / "session-20260911-000001.jsonl"
     first.write_text('{"text":"旧内容","translation":"不该显示"}\n',

@@ -58,7 +58,7 @@ def run_events(dialog, events, paused=()):
     router = DialogRouter(win, trs, primary)
     seg_q: "queue.Queue" = queue.Queue()
     stop = threading.Event()
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         log_path = Path(td) / "s.jsonl"
         worker = TranslatorWorker(seg_q, win, primary, log_path, stop, router=router)
         log = open(log_path, "a", encoding="utf-8")

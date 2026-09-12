@@ -50,7 +50,7 @@ primary = FakeTr("api", fail=True)
 fb = FakeTr("local")
 win = FakeWin()
 stop = threading.Event()
-with tempfile.TemporaryDirectory() as td:
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
     log_path = Path(td) / "s.jsonl"
     log = open(log_path, "a", encoding="utf-8")
     w = TranslatorWorker(None, win, primary, log_path, stop,
