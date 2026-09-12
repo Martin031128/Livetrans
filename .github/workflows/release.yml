@@ -112,7 +112,9 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG 已存在 → 更新安装包与说明"
             gh release upload "$TAG" release/* --clobber
-            gh release edit "$TAG" --title "LiveTrans Linux ${VERSION}" --notes-file /tmp/notes.md
+            # --draft=false：标签被删过重推时 Release 可能变孤儿/草稿，这里强制重新发布
+            gh release edit "$TAG" --title "LiveTrans Linux ${VERSION}" \
+              --draft=false --notes-file /tmp/notes.md
           else
             echo "Release $TAG 不存在 → 新建"
             gh release create "$TAG" release/* \
@@ -234,7 +236,9 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG 已存在 → 更新安装包与说明"
             gh release upload "$TAG" release/* --clobber
-            gh release edit "$TAG" --title "LiveTrans Windows ${VERSION}" --notes-file /tmp/notes.md
+            # --draft=false：标签被删过重推时 Release 可能变孤儿/草稿，这里强制重新发布
+            gh release edit "$TAG" --title "LiveTrans Windows ${VERSION}" \
+              --draft=false --notes-file /tmp/notes.md
           else
             echo "Release $TAG 不存在 → 新建"
             gh release create "$TAG" release/* \
