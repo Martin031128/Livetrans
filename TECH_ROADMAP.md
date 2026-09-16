@@ -224,6 +224,32 @@ translate/
 不可见）→ 两个 release job 的更新路径强制 `gh release edit --draft=false`；
 ③Inno 向导默认装 {autopf}（C 盘 Program Files）但"选择安装位置"页可改任意盘符。
 
+### 2026-09-12（二十八）：发版联调——单 Release 双平台产物全部上线
+
+应用户需求改为**单一 Release、双平台产物合并**（v1.0.0-win 独立 Release 弃用）：
+- `release.yml` 重写：任意 `v*` 标签触发双平台构建，统一发布到该标签的
+  一个 Release；产物名自带平台标识（Windows `-win-portable.zip`/`-win-setup.exe`，
+  Linux `.deb`），并各自附带 SHA256 校验和；
+- **Windows 包改为离线版**（构建前预下载识别/声纹模型，389MB zip / 338MB
+  安装器，识别离线可用），替代在线版；
+- **Windows exe 嵌入应用图标**：新增 `packaging/make_icon.py`（QtSvg 渲染
+  assets/livetrans.svg → Pillow 打包 16~256 七档 ICO）；桌面/任务栏不再显示
+  Python 默认图标。
+
+**发版联调四轮迭代，三个修复全部由 ::error 注解远程定位**：
+1. `--exclude-module wheel` 与 PyInstaller setuptools hook 冲突（venv 复现）；
+2. CI 缺 PYTHONUTF8 → 中文 print 全崩 + Release summary 写不进（workflow
+   顶层 `env: PYTHONUTF8: "1"` 修复）；
+3. `gh release upload release/*` 把子目录当资产（`is a directory`）→ 改精确
+   文件通配；另发现**删除远端标签重推会把已发布 Release 变孤儿/草稿** →
+   发布 job 改为"先删 Release（保留标签）→ 全新创建 → 精确上传"的确定性流程，
+   并加 `--draft=false` 兜底。
+
+**最终状态（公开 API 验证）**：Release v1.0.0 含 6 个产物（win zip/setup +
+linux offline/online deb + 双份校验和），Linux/Windows CI 双绿，
+test 工作流双平台 success。Linux 的 build_deb.sh 顺带修复 LICENSE 路径
+（目录平移后 `ROOT/../LICENSE` 失效，兼容新旧布局）。
+
 ### 2026-09-12（二十七）：双平台独立发版 + Windows CI 全绿
 
 **双平台独立 Release**（用户需求：Linux/Windows 版本号不互通、命名带平台后缀）：
