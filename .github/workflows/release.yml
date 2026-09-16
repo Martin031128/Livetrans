@@ -53,6 +53,10 @@ jobs:
           tail -n 40 deb_out.txt || true
           if [ "$code" != "0" ]; then
             tail -n 60 deb_out.txt >> "$GITHUB_STEP_SUMMARY" || true
+            # ::error 注解公开可读（对齐 run.sh 的做法）
+            msg=$(tail -n 30 deb_out.txt | sed 's/%/%25/g; s/\r//g' | paste -sd'|' - \
+                  | sed 's/|/%0A/g; s/::/\\:\\:/g')
+            echo "::error title=Linux 打包失败：普通包::$msg"
             exit "$code"
           fi
           mv dist/livetrans_${VERSION}_all.deb dist/livetrans_${VERSION}_all_online.deb
@@ -68,6 +72,9 @@ jobs:
           tail -n 40 deb_out.txt || true
           if [ "$code" != "0" ]; then
             tail -n 60 deb_out.txt >> "$GITHUB_STEP_SUMMARY" || true
+            msg=$(tail -n 30 deb_out.txt | sed 's/%/%25/g; s/\r//g' | paste -sd'|' - \
+                  | sed 's/|/%0A/g; s/::/\\:\\:/g')
+            echo "::error title=Linux 打包失败：离线包::$msg"
             exit "$code"
           fi
           mv dist/livetrans_${VERSION}_all.deb dist/livetrans_${VERSION}_all_offline.deb
