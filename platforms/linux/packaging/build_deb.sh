@@ -76,7 +76,10 @@ fi
 cp "$ROOT/packaging/install-python-deps.sh" "$PKG/usr/share/doc/livetrans/"
 cp "$ROOT/packaging/install.sh" "$PKG/usr/share/doc/livetrans/"
 # Debian 惯例：许可证放 /usr/share/doc/<pkg>/copyright
-cp "$ROOT/../LICENSE" "$PKG/usr/share/doc/livetrans/copyright"
+# （仓库根在 platforms/ 上一级；兼容旧 prototype/ 平铺布局）
+LICENSE_FILE="$ROOT/../../LICENSE"
+[ -f "$LICENSE_FILE" ] || LICENSE_FILE="$ROOT/../LICENSE"
+cp "$LICENSE_FILE" "$PKG/usr/share/doc/livetrans/copyright"
 chmod 755 "$PKG/usr/share/doc/livetrans/install-python-deps.sh" \
          "$PKG/usr/share/doc/livetrans/install.sh"
 cp "$ROOT/packaging/livetrans.desktop" "$PKG/usr/share/applications/"

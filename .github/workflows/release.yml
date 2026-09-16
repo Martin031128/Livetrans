@@ -46,16 +46,30 @@ jobs:
 
       - name: ① 普通包（不含模型，首次启动自动下载）
         working-directory: platforms/linux
+        shell: bash
         run: |
-          bash packaging/build_deb.sh
+          bash packaging/build_deb.sh > deb_out.txt 2>&1
+          code=$?
+          tail -n 40 deb_out.txt || true
+          if [ "$code" != "0" ]; then
+            tail -n 60 deb_out.txt >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$code"
+          fi
           mv dist/livetrans_${VERSION}_all.deb dist/livetrans_${VERSION}_all_online.deb
 
       - name: ② 完全离线包（先下识别/声纹模型，再打进去）
         working-directory: platforms/linux
+        shell: bash
         run: |
           python3 -c "from livetrans.asr import preload_model; preload_model()"
           python3 -c "from livetrans.speaker import ensure_speaker_model; ensure_speaker_model(log=print)"
-          bash packaging/build_deb.sh --offline
+          bash packaging/build_deb.sh --offline > deb_out.txt 2>&1
+          code=$?
+          tail -n 40 deb_out.txt || true
+          if [ "$code" != "0" ]; then
+            tail -n 60 deb_out.txt >> "$GITHUB_STEP_SUMMARY" || true
+            exit "$code"
+          fi
           mv dist/livetrans_${VERSION}_all.deb dist/livetrans_${VERSION}_all_offline.deb
 
       - name: 校验和
