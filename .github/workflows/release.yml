@@ -1,17 +1,16 @@
 name: release
 
-# 双平台独立发版：版本号互不相通，Release 标题与产物名都带平台后缀。
+# 双平台统一发版：一个 Release 同时包含 Windows 与 Linux 的安装包，用户按需下载。
 #
 # 触发方式：
-#   - 推送标签：v1.2.3-linux → 只构建/发布 Linux；v1.2.3-win → 只构建/发布 Windows
-#   - 手动 workflow_dispatch：两平台各用各的 __version__ 试打包（只出 artifact，不发 Release）
+#   - 推送标签：v1.2.3 → 两平台都构建，版本号 = 标签（去掉 v）
+#   - 手动 workflow_dispatch：两平台各读各的 __version__ 试打包（只出 artifact，不发 Release）
 #
-# 版本号来源：tag 触发时去掉平台后缀（v1.0.0-win → 1.0.0）；
-# 手动触发时各读各的 livetrans/__init__.py（platforms/linux 与 platforms/windows 独立）。
+# 平台区分靠文件名：Windows 带 -win-（zip / setup.exe）；Linux 为 .deb。
 
 on:
   push:
-    tags: ["v*-linux", "v*-win"]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -20,18 +19,17 @@ permissions:
 env:
   PYTHONUTF8: "1"   # Windows runner 默认 cp1252：中文 print 会直接 UnicodeEncodeError
 
-# ---------------- Linux（*-linux） ----------------
 jobs:
+  # ---------------- Linux（在线 deb + 离线 deb） ----------------
   build-linux:
-    if: github.event_name == 'workflow_dispatch' || endsWith(github.ref_name, '-linux')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
 
-      - name: 解析版本号（tag 去掉 -linux 后缀；否则读 linux 版 __version__）
+      - name: 解析版本号（tag 去掉 v；否则读 linux 版 __version__）
         run: |
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            echo "VERSION=${GITHUB_REF_NAME%-linux}" >> "$GITHUB_ENV"
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           else
             V=$(sed -n 's/^__version__ = "\(.*\)".*/\1/p' platforms/linux/livetrans/__init__.py | head -1)
             echo "VERSION=${V:-0.0.0-dev}" >> "$GITHUB_ENV"
@@ -73,57 +71,8 @@ jobs:
             platforms/linux/dist/*.deb
             platforms/linux/dist/SHA256SUMS
 
-  release-linux:
-    if: github.event_name == 'push' && endsWith(github.ref_name, '-linux')
-    needs: build-linux
-    runs-on: ubuntu-22.04
-    env:
-      GH_REPO: ${{ github.repository }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - name: 解析版本号
-        run: echo "VERSION=${GITHUB_REF_NAME%-linux}" >> "$GITHUB_ENV"
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: livetrans-linux
-          path: release
-
-      - name: 创建/更新 Linux Release（仅 Linux 产物）
-        run: |
-          ls -lh release
-          cat > /tmp/notes.md <<EOF
-          ## LiveTrans Linux ${VERSION}
-
-          ### 安装（Debian / Ubuntu）
-          \`\`\`bash
-          # 普通包：装完即用，首次启动联网自动下载识别模型
-          sudo dpkg -i livetrans_${VERSION}_all_online.deb
-          # 完全离线包：模型已内置，装完无需联网（体积约 200MB+）
-          sudo dpkg -i livetrans_${VERSION}_all_offline.deb
-          \`\`\`
-          依赖缺失时执行 \`sudo apt -f install\`；pip 侧依赖：
-          \`/usr/share/doc/livetrans/install-python-deps.sh\`
-
-          图形化安装向导：应用菜单里的「LiveTrans 安装向导」
-          详细说明见 [README](https://github.com/Martin031128/Livetrans#安装)。
-          EOF
-          TAG="${GITHUB_REF_NAME}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG 已存在 → 更新安装包与说明"
-            gh release upload "$TAG" release/* --clobber
-            # --draft=false：标签被删过重推时 Release 可能变孤儿/草稿，这里强制重新发布
-            gh release edit "$TAG" --title "LiveTrans Linux ${VERSION}" \
-              --draft=false --notes-file /tmp/notes.md
-          else
-            echo "Release $TAG 不存在 → 新建"
-            gh release create "$TAG" release/* \
-              --title "LiveTrans Linux ${VERSION}" --notes-file /tmp/notes.md
-          fi
-
-# ---------------- Windows（*-win） ----------------
+  # ---------------- Windows（离线版：内置识别/声纹模型） ----------------
   build-windows:
-    if: github.event_name == 'workflow_dispatch' || endsWith(github.ref_name, '-win')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -131,11 +80,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 解析版本号（tag 去掉 -win 后缀；否则读 windows 版 __version__）
+      - name: 解析版本号（tag 去掉 v；否则读 windows 版 __version__）
         shell: pwsh
         run: |
           if ("${{ github.ref_type }}" -eq "tag") {
-            $v = "${{ github.ref_name }}".TrimEnd("win").TrimEnd("-")
+            $v = "${{ github.ref_name }}".TrimStart("v")
           } else {
             $m = Select-String -Path "platforms/windows/livetrans/__init__.py" -Pattern '^__version__ = "(.*)"'
             $v = if ($m) { $m.Matches[0].Groups[1].Value } else { "0.0.0-dev" }
@@ -198,38 +147,55 @@ jobs:
             platforms/windows/dist/*.exe
             platforms/windows/dist/SHA256SUMS-windows.txt
 
-  release-windows:
-    if: github.event_name == 'push' && endsWith(github.ref_name, '-win')
-    needs: build-windows
+  # ---------------- 统一 Release（双平台产物合并发布） ----------------
+  release:
+    if: github.event_name == 'push'
+    needs: [build-linux, build-windows]
     runs-on: ubuntu-22.04
     env:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: 解析版本号
-        run: echo "VERSION=${GITHUB_REF_NAME%-win}" >> "$GITHUB_ENV"
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: livetrans-linux
+          path: release/linux
 
       - uses: actions/download-artifact@v4
         with:
           name: livetrans-windows
-          path: release
+          path: release/windows
 
-      - name: 创建/更新 Windows Release（仅 Windows 产物）
+      - name: 创建/更新 Release（双平台产物合并）
         run: |
+          mkdir -p release
+          cp release/linux/* release/ ; cp release/windows/* release/
           ls -lh release
           cat > /tmp/notes.md <<EOF
-          ## LiveTrans Windows ${VERSION}
+          ## LiveTrans ${VERSION}
 
-          ### 安装
+          一个 Release 包含双平台安装包，按系统选择下载（文件名带 -win- 的是 Windows 版，.deb 是 Linux 版）：
+
+          ### Windows
           \`\`\`powershell
-          # 安装器：双击 LiveTrans-${VERSION}-win-setup.exe，按向导安装（推荐）
-          # 便携版：解压后直接运行 LiveTrans.exe
-          Expand-Archive LiveTrans-${VERSION}-win-portable.zip -DestinationPath LiveTrans
-          .\LiveTrans\LiveTrans.exe
+          # 安装器：双击 LiveTrans-${VERSION}-win-setup.exe，按向导安装（可选安装位置）
+          # 便携版：解压 LiveTrans-${VERSION}-win-portable.zip 后直接运行 LiveTrans.exe
           \`\`\`
-          安装器装到 Program Files；config/keys/识别模型等用户数据自动放
-          %LOCALAPPDATA%\\LiveTrans，卸载重装不丢失。
-          识别模型已随包内置（离线可用）；翻译需在控制台填入 API key。
+          识别/声纹模型已内置（离线可用）；翻译需在控制台填入 API key。
+          安装版数据在 %LOCALAPPDATA%\\LiveTrans，卸载重装不丢失。
+
+          ### Linux（Debian / Ubuntu）
+          \`\`\`bash
+          # 普通包：装完即用，首次启动联网自动下载识别模型
+          sudo dpkg -i livetrans_${VERSION}_all_online.deb
+          # 完全离线包：模型已内置，装完无需联网（体积约 200MB+）
+          sudo dpkg -i livetrans_${VERSION}_all_offline.deb
+          \`\`\`
+          依赖缺失时执行 \`sudo apt -f install\`。
+
           详细说明见 [README](https://github.com/Martin031128/Livetrans#安装)。
           EOF
           TAG="${GITHUB_REF_NAME}"
@@ -237,10 +203,10 @@ jobs:
             echo "Release $TAG 已存在 → 更新安装包与说明"
             gh release upload "$TAG" release/* --clobber
             # --draft=false：标签被删过重推时 Release 可能变孤儿/草稿，这里强制重新发布
-            gh release edit "$TAG" --title "LiveTrans Windows ${VERSION}" \
+            gh release edit "$TAG" --title "LiveTrans ${VERSION}" \
               --draft=false --notes-file /tmp/notes.md
           else
             echo "Release $TAG 不存在 → 新建"
             gh release create "$TAG" release/* \
-              --title "LiveTrans Windows ${VERSION}" --notes-file /tmp/notes.md
+              --title "LiveTrans ${VERSION}" --notes-file /tmp/notes.md
           fi
