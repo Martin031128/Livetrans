@@ -220,14 +220,15 @@ jobs:
           详细说明见 [README](https://github.com/Martin031128/Livetrans#安装)。
           EOF
           TAG="${GITHUB_REF_NAME}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG 已存在 → 更新安装包与说明"
-            gh release upload "$TAG" release/* --clobber
-            # --draft=false：标签被删过重推时 Release 可能变孤儿/草稿，这里强制重新发布
-            gh release edit "$TAG" --title "LiveTrans ${VERSION}" \
-              --draft=false --notes-file /tmp/notes.md
-          else
-            echo "Release $TAG 不存在 → 新建"
-            gh release create "$TAG" release/* \
-              --title "LiveTrans ${VERSION}" --notes-file /tmp/notes.md
-          fi
+          # 确定性发布：先删旧 Release（只删 Release，保留标签本身）再全新创建
+          # —— 避免"删标签重推"留下的孤儿/草稿导致 view/create 失败
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          OUT=$(gh release create "$TAG" release/* \
+              --title "LiveTrans ${VERSION}" --notes-file /tmp/notes.md 2>&1) || {
+            echo "$OUT" | tail -n 20
+            msg=$(echo "$OUT" | tail -n 20 | sed 's/%/%25/g; s/\r//g' \
+                  | paste -sd'|' - | sed 's/|/%0A/g; s/::/\\:\\:/g')
+            echo "::error title=Release 发布失败::$msg"
+            exit 1
+          }
+          echo "$OUT"
