@@ -18,9 +18,14 @@ import queue
 import subprocess
 import sys
 import threading
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
+
+# soundcard 的 loopback 在静音期会刷 "data discontinuity in recording" 警告
+# （run.log 里刷屏，无诊断价值），这里全局静默该类警告。
+warnings.filterwarnings("ignore", message=".*data discontinuity.*")
 
 try:
     import sounddevice as sd
@@ -311,7 +316,7 @@ class ParecCapture:
 
     def __init__(self, source: SourceInfo, loopback_name: str,
                  out_q: "queue.Queue[np.ndarray]", target_sr: int = 16000,
-                 read_bytes: int = 800):
+                 read_bytes: int = 800, follow_default: bool = True):
         self.source = source
         self.device_key = loopback_name          # 设备名（soundcard 按名字定位）
         self.target_sr = target_sr
@@ -320,6 +325,11 @@ class ParecCapture:
         self.device_name = friendly_source_name(loopback_name)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        # 跟随默认扬声器：用户在看视频时切换输出设备（如扬声器→耳机）是常态，
+        # WASAPI loopback 只采"绑定设备"的输出流，不跟随就会采到一路静音
+        # （外挂"变聋"）——运行期检测默认扬声器变化并自动重连。
+        self.follow_default = follow_default
+        self._blocks_since_check = 0
         # 采集参数：以设备原生采样率打开，再重采样到 16k（与 AudioCapture 同策略）
         self.block_ms = 40
         if _IS_WIN:
@@ -342,6 +352,25 @@ class ParecCapture:
         if target is None:
             raise RuntimeError(f"找不到系统音频设备: {self.device_key}")
         return target
+
+    def _check_follow_default(self, recorder) -> bool:
+        """默认扬声器是否已切换；切换则更新绑定并返回 True（调用方需重开）。
+
+        非 Windows / soundcard 缺失 / 探测失败一律返回 False（不影响采集）。
+        """
+        if not (self.follow_default and _IS_WIN and sc is not None):
+            return False
+        try:
+            spk = sc.default_speaker()
+        except Exception:  # noqa: BLE001 - 探测失败按"没切换"处理
+            return False
+        if spk is None or spk.name == self.device_key:
+            return False
+        print(f"[capture] 系统音频：默认扬声器已切换 "
+              f"（{self.device_key} → {spk.name}），重连 loopback", flush=True)
+        self.device_key = spk.name
+        self.device_name = friendly_source_name(spk.name)
+        return True
 
     def start(self) -> None:
         self._stop.clear()
@@ -393,6 +422,17 @@ class ParecCapture:
                     out = resample(block, native_sr, self.target_sr)
                     if out.size:
                         self.out_q.put(out)
+                    # 每 ~2s（50 块 × 40ms）检查一次默认扬声器是否切换
+                    self._blocks_since_check += 1
+                    if self._blocks_since_check >= 50:
+                        self._blocks_since_check = 0
+                        if self._check_follow_default(recorder):
+                            try:
+                                recorder.__exit__(None, None, None)
+                            except Exception:  # noqa: BLE001
+                                pass
+                            recorder = None   # 下一轮按新默认扬声器重开
+                            continue
                 except Exception:  # noqa: BLE001 - 掉线：关掉重开
                     try:
                         recorder.__exit__(None, None, None)

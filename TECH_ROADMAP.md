@@ -224,6 +224,31 @@ translate/
 不可见）→ 两个 release job 的更新路径强制 `gh release edit --draft=false`；
 ③Inno 向导默认装 {autopf}（C 盘 Program Files）但"选择安装位置"页可改任意盘符。
 
+### 2026-09-17（二十九）：loopback 跟随默认扬声器（修"系统音频没识别到声音"）
+
+用户实测：翻译系统音频时没有识别到任何声音，会话日志 0 条记录。
+
+**诊断（实证探针，非猜测）**：
+- run.log：双路音频源都正常启动，但 `data discontinuity` 警告刷屏；会话 jsonl
+  0 字节——VAD 在所有输入上都没触发过；
+- 现场探针：并行开启与应用同参数的 ParecCapture + 通过默认扬声器播放 3 秒
+  440Hz 测试音 → **播放期 RMS=0.125（明显电平）、静音期 0**——采集链路正常；
+- 对比两个时间点：应用启动时默认扬声器 = "扬声器 (2- Senary Audio)"，
+  探针时 = "扬声器 (H USB Audio)"——本机有 4 个输出设备，**用户使用期间
+  切换了默认输出设备**。WASAPI loopback 只采"绑定设备"的输出流，应用不会
+  跟随切换 → 绑定设备静音 → 外挂"变聋"。
+
+**修复**（`capture.py`）：
+1. `ParecCapture` 新增 `follow_default=True`：采集循环每 ~2s（50 块）检查
+   `sc.default_speaker()`，变化即更新绑定并重开 loopback
+   （`_check_follow_default`，打印切换日志；探测失败按"没切换"处理）；
+2. 静默 `data discontinuity` 警告（module 级 warnings filter，run.log 不再刷屏）。
+
+**测试**：`test_capture_win.py` 新增 `test_loopback_follows_default_speaker`
+（切换/同名/关闭三态，monkeypatch sc）→ 12 项全过，全套件绿，无 lint。
+
+**用户侧**：重启外挂即恢复；此后切换输出设备外挂自动跟随，不再需要重启。
+
 ### 2026-09-12（二十八）：发版联调——单 Release 双平台产物全部上线
 
 应用户需求改为**单一 Release、双平台产物合并**（v1.0.0-win 独立 Release 弃用）：

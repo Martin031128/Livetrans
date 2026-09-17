@@ -188,6 +188,47 @@ def test_audio_capture_requires_device():
         print(f"[PASS] AudioCapture 无效设备正确报错（{type(e).__name__}）")
 
 
+def test_loopback_follows_default_speaker():
+    """loopback 必须跟随默认扬声器切换（切耳机/输出设备后外挂不再"变聋"）。
+
+    守的坑：WASAPI loopback 只采绑定设备的输出流，用户切换默认输出设备
+    （扬声器→耳机）后应用不会跟随，采到一路静音 → 整场 0 条识别记录。
+    _check_follow_default 检测默认扬声器变化并更新绑定。
+    """
+    import livetrans.capture as capmod
+
+    class _Spk:
+        def __init__(self, name: str):
+            self.name = name
+
+    class _FakeSC:
+        def __init__(self, name: str):
+            self._name = name
+
+        def default_speaker(self):
+            return _Spk(self._name)
+
+    cap = ParecCapture(SourceInfo("monitor", "internal", "系统音频(测试)", "旧设备"),
+                       "旧设备", queue.Queue(), target_sr=16000)
+    assert cap.follow_default is True, "跟随默认扬声器应默认开启"
+
+    real_sc = capmod.sc
+    try:
+        capmod.sc = _FakeSC("新设备")
+        assert cap._check_follow_default(None) is True, "默认扬声器变了应要求重开"
+        assert cap.device_key == "新设备", cap.device_key
+
+        capmod.sc = _FakeSC("新设备")
+        assert cap._check_follow_default(None) is False, "同名不应重开"
+
+        cap.follow_default = False
+        capmod.sc = _FakeSC("另一个")
+        assert cap._check_follow_default(None) is False, "关闭跟随不应重开"
+    finally:
+        capmod.sc = real_sc
+    print("[PASS] loopback 跟随默认扬声器切换（切换/同名/关闭三态）")
+
+
 if __name__ == "__main__":
     test_com_init_in_thread()
     test_friendly_names()
@@ -200,3 +241,4 @@ if __name__ == "__main__":
     test_source_keys_are_names()
     test_parec_capture_constructible()
     test_audio_capture_requires_device()
+    test_loopback_follows_default_speaker()
