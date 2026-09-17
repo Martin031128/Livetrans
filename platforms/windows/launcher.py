@@ -305,6 +305,17 @@ class Launcher(KeyUIMixin, BackendPageMixin, AudioPageMixin,
         self.cfg["translate"]["mode"] = self.mode_var.get()
         self.cfg["translate"]["auto_zh_to_en"] = bool(self.auto_zh_en_var.get())
         self.cfg["translate"]["fallback_local"] = bool(self.fallback_var.get())
+        self.cfg["translate"]["contextual"] = bool(self.ctx_para_var.get())
+        try:
+            self.cfg["translate"]["paragraph_gap_ms"] = max(
+                1000, min(10000, int(float(self.pgap_var.get() or 3.5) * 1000)))
+        except ValueError:
+            self.cfg["translate"]["paragraph_gap_ms"] = 3500
+        try:
+            self.cfg["translate"]["revise_depth"] = max(
+                1, min(3, int(self.pdepth_var.get() or 2)))
+        except ValueError:
+            self.cfg["translate"]["revise_depth"] = 2
 
         # 字幕外挂设置（先继承既有段：外挂⚙面板维护的 text_color/bg_color/位置等，
         # 否则控制台一保存，外挂里调好的颜色就丢了）
@@ -478,6 +489,13 @@ class Launcher(KeyUIMixin, BackendPageMixin, AudioPageMixin,
         self.mode_var.set(self.cfg.get("translate", {}).get("mode", "normal"))
         self.fallback_var.set(bool(self.cfg.get("translate", {}).get(
             "fallback_local", True)))
+        self.ctx_para_var.set(bool(self.cfg.get("translate", {}).get(
+            "contextual", True)))
+        self.pgap_var.set(str(
+            int(self.cfg.get("translate", {}).get("paragraph_gap_ms", 3500))
+            / 1000))
+        self.pdepth_var.set(str(self.cfg.get("translate", {}).get(
+            "revise_depth", 2)))
         self.auto_zh_en_var.set(bool(self.cfg.get("translate", {}).get(
             "auto_zh_to_en", False)))
 
