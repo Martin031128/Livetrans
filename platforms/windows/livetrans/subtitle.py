@@ -148,6 +148,7 @@ class _Pane:
         self.align = align                  # 对话模式右栏右对齐
         self.active = True                  # 活跃栏高亮（对话模式）
         self.pending: dict[str, tk.Text] = {}   # 待翻译条目 -> 译文控件（脉冲光标）
+        self.src_refs: dict[str, tk.Text] = {}  # 条目 -> 原文控件（段落原文可增长）
         bg = win.bg()
         frame = tk.Frame(parent, bg=bg)
 
@@ -345,6 +346,7 @@ class _Pane:
         if item.item_id:
             self.label_refs[item.item_id] = dst_txt
             self.meta_refs[item.item_id] = meta_lab
+            self.src_refs[item.item_id] = src_txt
             if not done:
                 self.pending[item.item_id] = dst_txt   # 脉冲光标 + 等译文
         if anim:                                       # 入场动效：颜色淡入
@@ -358,6 +360,7 @@ class _Pane:
                 self.label_refs.pop(iid, None)
                 self.meta_refs.pop(iid, None)
                 self.pending.pop(iid, None)
+                self.src_refs.pop(iid, None)
             removed.destroy()
             self.src_labels = [l for l in self.src_labels if l.winfo_exists()]
             self._meta_btns = [b for b in self._meta_btns if b.winfo_exists()]
@@ -478,6 +481,14 @@ class _Pane:
         btn.config(text="已复制")
         btn.after(900, lambda: btn.winfo_exists() and btn.config(text=old))
 
+    def update_source(self, item_id: str, text: str, win=None) -> None:
+        """原文原地更新（上下文连续段落：段落内每来一句，原文随增）。"""
+        src = self.src_refs.get(item_id)
+        if src is not None and src.winfo_exists() and win is not None:
+            self._set_text(src, text)
+            if self.follow:
+                self.stick_bottom()                # 原文增高后保持贴底
+
     def update_translation(self, item_id: str, text: str,
                            llm_ms: float | None = None, win=None) -> None:
         dst = self.label_refs.get(item_id)
@@ -589,6 +600,7 @@ class SubtitleWindow:
                  dialog: dict | None = None, on_dialog_change=None):
         self.q: "queue.Queue[DisplayItem]" = queue.Queue()
         self.uq: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self.sq: "queue.Queue[tuple[str, str]]" = queue.Queue()   # 原文原地更新
         self.lq: "queue.Queue[tuple[str, float]]" = queue.Queue()
         self.pq: "queue.Queue[tuple[str, str]]" = queue.Queue()
         self._status_q: "queue.Queue[str]" = queue.Queue()
@@ -1226,6 +1238,10 @@ class SubtitleWindow:
         """译文推进/完成（配合 translation=None 先上原文）；llm_ms 回填延迟指标。"""
         self.uq.put((item_id, text, llm_ms))
 
+    def update_source(self, item_id: str, text: str) -> None:
+        """原文原地更新（上下文连续段落：段落内每来一句追加到原文）。"""
+        self.sq.put((item_id, text))
+
     def set_partial(self, kind: str, text: str) -> None:
         """更新某栏"识别中"实时行（说话中流式文本）；text 为空则清空。
 
@@ -1305,6 +1321,19 @@ class SubtitleWindow:
         if followed:
             for pane in self._panes.values():
                 if pane.follow:               # follow 态：增高后仍保持贴底
+                    pane.stick_bottom()
+        src_followed = False
+        try:
+            while True:
+                item_id, text = self.sq.get_nowait()
+                for k, pane in self._panes.items():
+                    pane.update_source(item_id, text, self)
+                src_followed = True
+        except queue.Empty:
+            pass
+        if src_followed:
+            for pane in self._panes.values():
+                if pane.follow:               # 原文增高后仍保持贴底
                     pane.stick_bottom()
         try:
             while True:

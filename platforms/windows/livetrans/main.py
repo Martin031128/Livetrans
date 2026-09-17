@@ -20,10 +20,13 @@ import signal
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
 import yaml
+
+from dataclasses import dataclass, field
 
 from .asr import ASRWorker, SegmentEvent, SenseVoiceASR
 from .capture import (AudioCapture, ParecCapture, SourceInfo,
@@ -237,6 +240,56 @@ class DialogRouter:
         return bool(paused and role in paused)
 
 
+def _join_parts(parts: list[str]) -> str:
+    """段落内拼接：以 CJK 为主直接相连，西文以空格相连。"""
+    if not parts:
+        return ""
+    sample = next((p for p in parts if p and p != "…"), "")
+    cjk = sum(1 for ch in sample if "\u4e00" <= ch <= "\u9fff")
+    sep = "" if sample and cjk * 2 >= len(sample) else " "
+    return sep.join(p for p in parts if p)
+
+
+MAX_PARA_SENTS = 8      # 段落句数硬上限（防止长独白把修订输入撑爆；超过强制分段）
+
+
+@dataclass
+class _Para:
+    """上下文连续段落模式：一段 = 一个显示条目，句句追加、整段持续修订。
+
+    - srcs：段落内每句的原始识别文本（按时间序）；
+    - dsts：每句的译文（流式 partial / 最终值），未修订时的显示内容；
+    - revised/revised_cover：最近一次整段修订的结果与当时覆盖的句数——
+      修订之后的句子仍按句显示，下一次修订再把它们并进去。
+    为什么整段重写而不是只重写尾部：尾部区间的切片无法跨"上次修订"边界
+    （合并后的文本拆不回句子），整段重写语义简单且上下文最完整；
+    段落长度由 3.5s 停顿 + MAX_PARA_SENTS 双重限定，成本可控。
+    """
+    para_id: str
+    ts: float
+    kind: str
+    label: str
+    app: str
+    role: str
+    srcs: list[str] = field(default_factory=list)
+    dsts: list[str | None] = field(default_factory=list)
+    revised: str | None = None
+    revised_cover: int = 0
+    pending_since_revise: int = 0        # 上次修订以来新翻完的句数
+    revising: bool = False
+    revise_again: bool = False
+
+
+def _para_text(p: _Para) -> str:
+    """段落的当前显示文本（未完成句用 … 占位）。"""
+    if p.revised is None:
+        return _join_parts([(t or "…") for t in p.dsts])
+    parts = [p.revised]
+    parts += [(p.dsts[i] or "…")
+              for i in range(p.revised_cover, len(p.dsts))]
+    return _join_parts(parts)
+
+
 class TranslatorWorker(threading.Thread):
     """消费 SegmentEvent：原文立即上屏 -> 并行翻译 -> **先完成先上屏**（乱序）。
 
@@ -277,6 +330,10 @@ class TranslatorWorker(threading.Thread):
         self._next_ctx = 0                     # 下一个写入上下文/日志的顺序号
         self._ctx_pending: dict[int, dict] = {}  # seq -> 已完成的上下文槽位
         self._gate_lock = threading.Lock()
+        # 上下文连续段落模式：每个 (音频路, 角色) 一个开放段落
+        self._paras: dict[tuple, _Para] = {}
+        self._para_anchor: dict[tuple, str] = {}   # key -> 上一段的定稿译文（衔接上下文）
+        self._pool: ThreadPoolExecutor | None = None
 
     def pick(self, kind: str) -> LLMTranslator:
         """该路音频用哪个翻译器（兼容旧路径；对话模式走 router）。"""
@@ -310,13 +367,18 @@ class TranslatorWorker(threading.Thread):
                     pass
 
     def run(self) -> None:
-        from concurrent.futures import ThreadPoolExecutor
         n_workers = max(1, min(8, int(getattr(self.translator.cfg,
                                               "llm_concurrency", 2))))
         _log(f"翻译并发数: {n_workers}")
+        self._ctx_mode = bool(getattr(self.translator.cfg, "contextual", True))
+        if self._ctx_mode:
+            _log(f"上下文连续段落模式：开（分段停顿 "
+                 f"{int(getattr(self.translator.cfg, 'paragraph_gap_ms', 3500))}ms，"
+                 f"尾部修订 {max(1, int(getattr(self.translator.cfg, 'revise_depth', 2)))} 句）")
         log = open(self.log_path, "a", encoding="utf-8")
         pool = ThreadPoolExecutor(max_workers=n_workers,
                                   thread_name_prefix="llm")
+        self._pool = pool
         try:
             while not self.stop.is_set():
                 try:
@@ -338,13 +400,20 @@ class TranslatorWorker(threading.Thread):
                     item_id = f"{ev.source_key}-{ev.ts:.3f}-{seq}"
                     if role:
                         item_id += f"-{role}"
-                    self.window.post(DisplayItem(
-                        kind=ev.kind, label=ev.label, app=ev.app,
-                        text=ev.text, translation=None, item_id=item_id,
-                        ts=ev.ts, asr_ms=ev.asr_ms, speaker=ev.speaker,
-                        role=role or ""))
-                    pool.submit(self._translate_task, seq, ev, item_id, log,
-                                role)
+                    para = self._para_for(ev, role) if self._ctx_mode else None
+                    if para is not None:
+                        # 段落模式：不按句建显示条目，句子进段落 + 尾部修订
+                        slot = len(para.dsts) - 1
+                        pool.submit(self._translate_task, seq, ev, item_id,
+                                    log, role, para, slot)
+                    else:
+                        self.window.post(DisplayItem(
+                            kind=ev.kind, label=ev.label, app=ev.app,
+                            text=ev.text, translation=None, item_id=item_id,
+                            ts=ev.ts, asr_ms=ev.asr_ms, speaker=ev.speaker,
+                            role=role or ""))
+                        pool.submit(self._translate_task, seq, ev, item_id,
+                                    log, role)
         finally:
             # 彻底停止：关闭底层连接中断"正在跑"的请求（本地模型可能分钟级），
             # 取消排队中的任务。ollama 服务本身保留（下次启动秒级就绪，
@@ -362,21 +431,109 @@ class TranslatorWorker(threading.Thread):
             pool.shutdown(wait=False, cancel_futures=True)
             log.close()
 
+    def _para_for(self, ev: SegmentEvent, role: str | None) -> _Para:
+        """取/开该 (音频路, 角色) 的段落：停顿超阈值或段太长则分段。"""
+        gap_thr = float(getattr(self.translator.cfg, "paragraph_gap_ms", 3500))
+        key = (ev.kind, role or "")
+        p = self._paras.get(key)
+        if p is not None and ev.gap_ms <= gap_thr and len(p.srcs) < MAX_PARA_SENTS:
+            # 并入当前段落：原文追加，译文留待本句翻译
+            p.srcs.append(ev.text)
+            p.dsts.append(None)
+            self.window.update_source(p.para_id, _join_parts(p.srcs))
+            return p
+        if p is not None:                      # 关段：留锚点供下一段衔接
+            self._para_anchor[key] = p.revised or _para_text(p)
+            if p.pending_since_revise > 0 and len(p.dsts) >= 2:
+                # 关段前补一次修订：末句必须被并进连贯文本（否则永按句显示）
+                tr = self._resolve_translator(p.role or None, p.kind)
+                self._maybe_revise(p, tr, p.role or None,
+                                   max(1, int(getattr(self.translator.cfg,
+                                                      "revise_depth", 2))),
+                                   force=True)
+        para_id = f"para-{ev.source_key}-{ev.ts:.3f}-{self._seq}"
+        if role:
+            para_id += f"-{role}"
+        p = _Para(para_id=para_id, ts=ev.ts, kind=ev.kind, label=ev.label,
+                  app=ev.app, role=role or "", srcs=[ev.text], dsts=[None])
+        self._paras[key] = p
+        self.window.post(DisplayItem(
+            kind=ev.kind, label=ev.label, app=ev.app,
+            text=ev.text, translation=None, item_id=para_id,
+            ts=ev.ts, asr_ms=ev.asr_ms, speaker=ev.speaker, role=role or ""))
+        return p
+
+    def _maybe_revise(self, p: _Para, translator: LLMTranslator,
+                      role: str | None, depth: int, force: bool = False) -> None:
+        """句子翻完触发整段修订；每消化 depth 句做一次（同段一次只跑一个）。"""
+        if len(p.dsts) < 2:                    # 单句没有"上文"可修
+            return
+        if not force and p.pending_since_revise < max(1, depth):
+            return                             # 攒够 depth 句再修订（控制调用量）
+        if p.revising:
+            p.revise_again = True
+            return
+        p.pending_since_revise = 0
+        p.revising = True
+        if self._pool is not None:
+            self._pool.submit(self._revise_task, p, translator, role, depth)
+
+    def _revise_task(self, p: _Para, translator: LLMTranslator,
+                     role: str | None, depth: int) -> None:
+        """整段修订：全段识别+现译文 → 合并纠错为连贯文本（原地替换显示）。"""
+        try:
+            try:
+                key = (p.kind, p.role)
+                anchor = self._para_anchor.get(key, "")
+                revised = translator.revise(list(p.srcs), _para_text(p),
+                                            anchor=anchor)
+                if revised:
+                    p.revised = revised
+                    p.revised_cover = len(p.dsts)   # 修订后新增的句子仍按句显示
+                    self.window.update_translation(p.para_id, _para_text(p))
+                    _log(f"段落修订完成 para={p.para_id[:28]} "
+                         f"覆盖 {p.revised_cover} 句 -> {revised[:40]!r}")
+            except Exception as e:  # noqa: BLE001 - 修订失败保留现有译文
+                _log(f"段落修订失败（保留现有译文）: {type(e).__name__}: {e}")
+        finally:
+            p.revising = False
+            if p.revise_again and not self.stop.is_set():
+                p.revise_again = False
+                self._maybe_revise(p, translator, role, depth)
+
     def _translate_task(self, seq: int, ev: SegmentEvent, item_id: str, log,
-                        role: str | None = None) -> None:
-        """单句翻译（worker 线程）：流式增量与最终译文均独立乱序上屏。"""
+                        role: str | None = None, para: _Para | None = None,
+                        slot: int = -1) -> None:
+        """单句翻译（worker 线程）：流式增量与最终译文均独立乱序上屏。
+
+        段落模式（para 非 None）：显示更新打到所属段落上（句子合入段落尾部），
+        翻完触发尾部修订；item_id 仍按句分配，供上下文/会话日志按序落盘。
+        """
         ttft_ms: float | None = None
         t_llm0 = time.monotonic()
         self.last_active = t_llm0          # 供"空闲自动卸载"判断是否还在翻译
         # 对话模式：按角色取翻译器（方向与上下文都按角色，与当前输入来源无关）
         translator = self._resolve_translator(role, ev.kind)
 
+        def _show(text: str, ms: float | None = None) -> None:
+            if para is None:
+                self.window.update_translation(item_id, text, ms)
+            else:
+                self.window.update_translation(para.para_id, _para_text(para), ms)
+
         def on_delta(partial: str) -> None:
             nonlocal ttft_ms
             if ttft_ms is None:
                 ttft_ms = (time.monotonic() - t_llm0) * 1000
             # 直接上屏：本句原文已先于本句任何 partial 入显示队列，乱序安全
-            self.window.update_translation(item_id, partial)
+            if para is not None:
+                # 已被整段修订覆盖的句子：迟到的 partial 不回写（以修订结果为准）
+                if para.revised is not None and slot < para.revised_cover:
+                    return
+                para.dsts[slot] = partial
+                _show(_para_text(para))
+            else:
+                self.window.update_translation(item_id, partial)
 
         raw_parts: list[str] = []
 
@@ -420,7 +577,15 @@ class TranslatorWorker(threading.Thread):
         raw = (raw_parts[-1] if raw_parts else "")[:2000]
         _log(f"LLM 完成 seq={seq} ttft={ttft_ms and round(ttft_ms)}ms "
              f"total={round(llm_ms)}ms raw[:120]={raw[:120]!r}")
-        self.window.update_translation(item_id, translation, llm_ms)  # 先完成先上屏
+        if para is None:
+            self.window.update_translation(item_id, translation, llm_ms)  # 先完成先上屏
+        else:
+            para.dsts[slot] = translation       # 覆盖流式 partial 为最终值
+            _show(_para_text(para), llm_ms)
+            para.pending_since_revise += 1
+            self._maybe_revise(para, translator, role,
+                               max(1, int(getattr(self.translator.cfg,
+                                                  "revise_depth", 2))))
         if self.stop.is_set():                # 停止后被中断的任务：不写会话日志
             return
         self._ctx_commit(seq, ev, item_id, translation, llm_ms, ttft_ms, raw,

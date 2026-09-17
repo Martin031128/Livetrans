@@ -44,6 +44,9 @@ class TranslateConfig:
     temperature: float = 0.2
     auto_zh_to_en: bool = False          # 输入为中文时自动译为英文（双向场景）
     fallback_local: bool = True          # 云端 API 连续失败时自动切本地模型（弱网降级）
+    contextual: bool = True              # 上下文连续段落：字幕按段落呈现，尾部持续修订
+    paragraph_gap_ms: int = 3500         # 停顿超过该值才分段（上下文连续段落模式）
+    revise_depth: int = 2                # 段落尾部修订覆盖的最近句数
 
 
 @dataclass

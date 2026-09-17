@@ -224,6 +224,38 @@ translate/
 不可见）→ 两个 release job 的更新路径强制 `gh release edit --draft=false`；
 ③Inno 向导默认装 {autopf}（C 盘 Program Files）但"选择安装位置"页可改任意盘符。
 
+### 2026-09-17（三十）：上下文连续段落模式（字幕按段落呈现 + 整段持续修订）
+
+用户需求：字幕不再"一句一段"——短停顿不分段（≥3.5s 长停顿才分段），
+每句翻完用上下文把识别+译文合并修正（纠 ASR 错、连贯润色），显示为
+连续段落。确认：默认开启、3.5s 阈值可调、修订深度默认 2 句。
+
+**实现**（`asr.py` / `main.py` / `translate.py` / `subtitle.py` / `config.py` /
+`page_backend.py` / `launcher.py`）：
+1. `SegmentEvent.gap_ms`：ASRWorker 按"相邻段完成时刻差 - 上段音频时长
+   + 尾部计入的静音"估算真实停顿；同段拆分的多句 gap=0（同一次说话）；
+2. `TranslatorWorker` 段落模式（`_Para`）：每 (音频路, 角色) 一个开放段落
+   = 一个显示条目；句子流式合入（原文 `update_source` 原地追加、译文
+   按句追加，未完成句 … 占位，乱序完成安全）；长停顿/段满 8 句即分段，
+   关段留锚点供下一段衔接上下文；
+3. **整段修订**而非尾部切片：修订=把全段识别+现译文交给 LLM 合并纠错
+   （`LLMTranslator.revise`，SYSTEM_REVISE 提示词 + ThinkFilter 兜底剥离），
+   结果原地替换显示；修订后新增的句子仍按句显示、下次修订再并入。
+   切片方案（tail 区间）在测试中暴露"区间前移丢内容"缺陷后否决；
+   段长由 3.5s 停顿 + MAX_PARA_SENTS=8 双重限定，成本可控；
+4. `revise_depth` 语义 = 每消化 N 句做一次修订（depth=2 时调用量 ≈1.5x，
+   而非每句 2x）；关段时强制补一次修订（末句必须被并进连贯文本）；
+5. 显示层：`_Pane.src_refs` + `SubtitleWindow.update_source`（sq 队列，
+   原文原地增长随段落贴底）；会话 jsonl **仍按句落盘**（摘要/导出不变）；
+6. 外挂独立管线 `overlay/pipeline.py` 直接复用 TranslatorWorker → 段落
+   模式对外挂自动生效，零改动；
+7. 控制台「翻译」页新增：上下文连续段落开关 + 分段停顿(秒) + 修订(句)；
+   config.example.yaml 同步文档。
+
+**测试**：新增 `test_paragraph.py` 4 项（拼接规则/渲染与整段修订状态机/
+gap 默认值/管线集成假窗口——合段、分段、修订内容、日志按句）；
+全套 17 文件全绿，selfcheck 10/10，无 lint。
+
 ### 2026-09-17（二十九）：loopback 跟随默认扬声器（修"系统音频没识别到声音"）
 
 用户实测：翻译系统音频时没有识别到任何声音，会话日志 0 条记录。
