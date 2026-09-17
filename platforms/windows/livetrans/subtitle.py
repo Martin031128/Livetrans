@@ -711,6 +711,9 @@ class SubtitleWindow:
 
         self.header = tk.Frame(self.root, bg=self.bg())
         self.header.pack(fill="both", expand=True, padx=10, pady=(4, 0))
+        # 行权重：窗格 grid 在 header 第 0 行——没有行权重时窗口拉高，
+        # 行 0 仍按内容高度收缩，画布吃不到空间（放大窗口看不到更多内容）
+        self.header.grid_rowconfigure(0, weight=1)
         for role, color in (("self", FG_EXTERNAL), ("other", FG_INTERNAL)):
             pane = _Pane(self.header, DIALOG_ROLE_LABELS.get(role, role), color,
                          on_pause=self._toggle_pause, win=self)
