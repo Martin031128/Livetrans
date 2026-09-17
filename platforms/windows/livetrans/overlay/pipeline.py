@@ -38,7 +38,7 @@ class SourceManager:
 
     def __init__(self, audio_cfg, asr_cfg, seg_q, sink, asr_box, *,
                  mirror: bool = False, log=None, persist=None,
-                 source_factory=None):
+                 source_factory=None, partial_hook=None):
         self.audio = audio_cfg
         self.asr_cfg = asr_cfg
         self.seg_q = seg_q
@@ -48,6 +48,7 @@ class SourceManager:
         self._log = log or _log
         self._persist = persist
         self._source_factory = source_factory      # 测试注入点
+        self.partial_hook = partial_hook           # 边讲边译：partial → 翻译线程
         self.running: dict[str, dict] = {}         # kind -> {cap, stop, pause}
 
     def _source_of(self, kind: str):
@@ -82,7 +83,7 @@ class SourceManager:
         ev, pv = threading.Event(), threading.Event()
         ASRWorker(src, cap_q, self.asr_box["asr"], self.asr_cfg, self.seg_q,
                   ev, on_level=self.sink.set_level,
-                  on_partial=self.sink.set_partial,
+                  on_partial=self.partial_hook or self.sink.set_partial,
                   pause_event=pv, speaker=self.asr_box.get("speaker")).start()
         self.running[kind] = {"cap": cap, "stop": ev, "pause": pv}
         self._log(f"音频源就绪: {src.label}（{cap.device_name}）")
@@ -146,9 +147,20 @@ def run_overlay(cfg: AppConfig, config_path: Path | None = None) -> int:
     mirror_mode = bool(getattr(cfg.overlay, "mirror", False))
     seg_q: "queue.Queue" = queue.Queue()
     asr_box: dict = {}                     # SenseVoice 实例（boot 里加载）
+    worker_box: dict = {}                  # 翻译线程（partial 分流要用）
+
+    def _on_partial(kind: str, text: str) -> None:
+        """partial 分流：上下文连续段落模式喂给翻译线程（边讲边译），
+        否则走外挂窗"识别中"行（旧行为）；翻译线程未就绪时走旧行为。"""
+        w = worker_box.get("worker")
+        if w is not None and getattr(cfg.translate, "contextual", True):
+            w.feed_partial(kind, text)
+        else:
+            overlay.set_partial(kind, text)
+
     sources = SourceManager(
         cfg.audio, cfg.asr, seg_q, overlay, asr_box,
-        mirror=mirror_mode, log=_log,
+        mirror=mirror_mode, log=_log, partial_hook=_on_partial,
         persist=(lambda patch: persist_overlay(config_path, patch))
         if config_path else None)
 
@@ -232,9 +244,11 @@ def run_overlay(cfg: AppConfig, config_path: Path | None = None) -> int:
             log_dir = Path(cfg.session.log_dir)
             log_dir.mkdir(parents=True, exist_ok=True)
             log_path = log_dir / f"overlay-{datetime.now():%Y%m%d-%H%M%S}.jsonl"
-            TranslatorWorker(seg_q, overlay, translator, log_path, stop,
-                             fallback_builder=_make_fallback_builder(
-                                 cfg, _log)).start()
+            worker = TranslatorWorker(seg_q, overlay, translator, log_path,
+                                      stop, fallback_builder=_make_fallback_builder(
+                                          cfg, _log))
+            worker_box["worker"] = worker
+            worker.start()
             _log(f"翻译后端: {translator.backend}/{translator.model}"
                  f" · 会话日志 {log_path.name} · 就绪，开始说话吧")
         except Exception as e:  # noqa: BLE001

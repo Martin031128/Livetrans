@@ -9,7 +9,7 @@ asr:
   language: auto
   vad_aggressiveness: 3
   min_speech_ms: 200
-  silence_ms: 550
+  silence_ms: 400             # 静音判定句尾；段落模式下修订会合并碎句
   max_segment_sec: 8
   max_words_per_segment: 14
   pre_buffer_ms: 300

@@ -25,7 +25,8 @@ class ASRConfig:
     language: str | None = None          # None = 自动检测
     vad_aggressiveness: int = 3
     min_speech_ms: int = 200             # 判定"说话开始"的最短语音时长
-    silence_ms: int = 550                # 静音多久判定一句话结束（越小越快，易碎句）
+    silence_ms: int = 400                # 静音多久判定一句话结束（越小越快，易碎句；
+                                         #  上下文连续段落模式的修订会合并碎句兜底）
     max_segment_sec: float = 8.0         # 单段最长录音，超过强制切段（长语音不被憋住）
     max_words_per_segment: int = 14      # 转写结果超过该词数自动拆成多条（0=不限）
     pre_buffer_ms: int = 300

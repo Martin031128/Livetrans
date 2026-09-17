@@ -12,7 +12,7 @@ try:
     assert len(cfg.providers) == 9, f"providers 数量异常: {len(cfg.providers)}"
     assert cfg.translate.provider == "deepseek"
     assert cfg.asr.max_words_per_segment == 14
-    assert cfg.asr.silence_ms == 550
+    assert cfg.asr.silence_ms == 400
     assert cfg.providers["deepseek"].label == "DeepSeek"
     assert "deepseek-v4-flash" in cfg.providers["deepseek"].models
     ok.append(f"config: 9 个翻译后端加载 OK（含 label/models 元数据）")

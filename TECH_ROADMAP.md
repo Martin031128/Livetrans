@@ -224,6 +224,34 @@ translate/
 不可见）→ 两个 release job 的更新路径强制 `gh release edit --draft=false`；
 ③Inno 向导默认装 {autopf}（C 盘 Program Files）但"选择安装位置"页可改任意盘符。
 
+### 2026-09-17（三十一）：边讲边译（partial 增量翻译）+ 字幕窗拉高显示更多内容
+
+**① 边讲边译**：用户反馈译文出现太慢（VAD 等静音 550ms + ASR + LLM TTFT，
+讲到第二句时第一句译文才出现）。方案：partial 识别流（说话中每 0.8s 的
+增量快照转写，原先只喂"识别中"行）接入段落管线——
+
+- `TranslatorWorker.feed_partial`（partial_q，run 循环每轮优先消化）；
+- partial 识别文本作为段落**临时尾句**（`_Para.live_*`：live_src 原文、
+  live_dst 临时译文、live_upto 已译字符位、live_gen 代次）；
+- 节流：新增 ≥ `PARTIAL_WORDS=5` 词（CJK 按字/西文按词）才翻一次增量，
+  同段一次只跑一个在途翻译（`live_busy`）；翻译结果流式并入临时尾句；
+- VAD 定稿句到达：`live_gen += 1` 作废在途 partial 翻译、清空临时尾句、
+  正式句入段——原文不重复（partial 快照可能改写前面的字，由定稿兜底）；
+- 长停顿后 partial 触发**预分段**（不等定稿，按 last_activity 判定）；
+- 接线：主程序与外挂管线 `on_partial` 按模式分流（段落模式→翻译线程，
+  旧模式→字幕窗"识别中"行；翻译线程未就绪时走旧行为）；外挂
+  `SourceManager` 新增 `partial_hook` 注入点；
+- **silence_ms 550→400**：段落修订兜住碎句风险，译文再提前 ~150ms
+  （config 默认/example/用户 config/selfcheck 断言同步）。
+
+**② 字幕窗拉高显示更多内容**：`_apply_layout` 窗格 grid 只配了列权重
+没配行权重——窗口拉高时行 0 仍按内容高度收缩，画布吃不到空间。
+修复 `header.grid_rowconfigure(0, weight=1)`。
+
+**测试**：`test_paragraph.py` 新增"边讲边译"集成用例（预开段/5 词节流/
+定稿替换不重复/单句不修订）→ 5 项；全套 17 文件全绿，selfcheck 10/10，
+无 lint。
+
 ### 2026-09-17（三十）：上下文连续段落模式（字幕按段落呈现 + 整段持续修订）
 
 用户需求：字幕不再"一句一段"——短停顿不分段（≥3.5s 长停顿才分段），

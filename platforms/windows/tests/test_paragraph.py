@@ -18,8 +18,9 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from livetrans.asr import SegmentEvent  # noqa: E402
-from livetrans.main import (_join_parts, _para_text, _Para,  # noqa: E402
-                            MAX_PARA_SENTS, TranslatorWorker)
+from livetrans.main import (_join_parts, _para_src, _para_text,  # noqa: E402
+                            _Para, MAX_PARA_SENTS, PARTIAL_WORDS,
+                            TranslatorWorker)
 
 
 # ---------------- 1) 拼接规则 ----------------
@@ -116,8 +117,10 @@ class FakeTranslator:
         self.client = self._Client()
         self.backend, self.model = "fake", "fake"
         self.revise_calls = []
+        self.translate_calls = []
 
     def translate_stream(self, text, on_delta=None, raw_hook=None):
+        self.translate_calls.append(text)
         out = f"T[{text}]"
         if on_delta is not None:
             on_delta(out)
@@ -185,6 +188,63 @@ def test_worker_paragraph_pipeline(tmp: Path):
     print("[PASS] 管线集成：合段/分段/修订/日志按句落盘")
 
 
+def test_worker_partial_live_translate(tmp: Path):
+    """边讲边译：partial 增量攒够词数即翻、临时尾句显示；定稿句替换不重复。
+
+    守的坑：
+    - partial 识别快照会改写前面的字（live_upto 钳制 + 定稿替换兜底）；
+    - 定稿句到达时必须清掉临时尾句（live_gen 作废在途翻译），
+      否则 partial 原文与正式原文在段落里出现两遍；
+    - 长停顿后 partial 预分段（不等定稿）。
+    """
+    win = FakeWin()
+    tr = FakeTranslator()
+    log_path = tmp / "session-live.jsonl"
+    stop = threading.Event()
+    seg_q: "queue.Queue[SegmentEvent]" = queue.Queue()
+    w = TranslatorWorker(seg_q, win, tr, log_path, stop)
+    w.start()
+    try:
+        # 说话中：partial 逐步增长（ASCII 词，5 词一档）
+        w.feed_partial("internal", "hello world foo")
+        w.feed_partial("internal", "hello world foo bar baz")
+        w.feed_partial("internal", "hello world foo bar baz qux quux")
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            with win._lock:
+                opened = len(win.items)
+                live_dst = any(isinstance(d, str) and d.startswith("T[")
+                               for d in win.dst.values())
+            if opened >= 1 and live_dst:
+                break
+            time.sleep(0.05)
+        assert time.monotonic() < deadline, "partial 未触发预开段/翻译"
+        with win._lock:
+            para_id = win.items[0].item_id
+            # partial 原文进了段落原文（临时尾句）
+            assert "qux" in win.src.get(para_id, ""), win.src
+            # 只翻过一次增量（5 词节流）：第三条 partial 才跨过阈值
+            assert len(tr.translate_calls) == 1, tr.translate_calls
+        # VAD 定稿句到达：临时尾句清空，正式句入段（不重复）
+        seg_q.put(_ev("hello world foo bar baz qux quux", ts=100.0, gap_ms=0.0))
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            with win._lock:
+                n_recs = sum(1 for _ in open(log_path, encoding="utf-8"))
+            if n_recs >= 1:
+                break
+            time.sleep(0.05)
+        with win._lock:
+            assert win.src[para_id] == "hello world foo bar baz qux quux", \
+                win.src[para_id]           # 定稿原文替换 partial，无重复
+        assert len(tr.revise_calls) == 0   # 单句段落不修订
+    finally:
+        stop.set()
+        w.join(timeout=5)
+        assert not w.is_alive(), "worker 未退出"
+    print(f"[PASS] 边讲边译：预开段/{PARTIAL_WORDS} 词节流翻译/定稿替换不重复")
+
+
 if __name__ == "__main__":
     import tempfile
     test_join_parts()
@@ -192,4 +252,6 @@ if __name__ == "__main__":
     test_segment_event_gap_default()
     with tempfile.TemporaryDirectory() as d:
         test_worker_paragraph_pipeline(Path(d))
+    with tempfile.TemporaryDirectory() as d:
+        test_worker_partial_live_translate(Path(d))
     print("ALL PASS")
