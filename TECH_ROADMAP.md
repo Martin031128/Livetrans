@@ -1466,6 +1466,17 @@ conda 把非 Python 运行库放在 `<env>\Library\bin\`，PyInstaller **不会�
 - **核实后无需搬**：A-5 配色落盘语义——Linux GTK 版外挂 `persist_geom` 本就只写几何/透明度，不存在该缺陷。
 - 全量验证：selfcheck 10 项 + 12 个测试文件（含新增 test_configstore/test_paragraph）全绿；控制台实测三项新设置上屏与保存闭环。
 
+### 2026-09-18（二）：Linux 音频设备热切换跟随 + 三处用户实测问题修复
+
+- **用户实测反馈三问题**：① 段落模式/修订没出现；② 切换麦克风/音源后无法识别；③ 桌面图标消失且点击无反应。
+- **① 根因是回归验证踩坑（引以为戒）**：验证控制台设置项时调用 `_apply_and_save()` 当作"只改内存"，**实际它会把整份 cfg 落盘**——测试值 `contextual=False / gap=2500 / depth=3` 被写进了用户 config.yaml，段落模式根本没开（run.log 只有"翻译并发数"一行可证）。教训：**碰真配置的函数必须在临时目录里验证**。已恢复默认值（configstore.patch_section 定向修补，其余键不动）。
+- **② 新增 Linux 侧设备热切换跟随**（对齐 Windows `1d84342` 的语义，属 SYNC 文档 B 类"可选增强"）：
+  - `capture.default_audio_device(kind)`：pactl 轮询系统默认输出(sink)/输入(source)；
+  - 捕获链重构为**每链独立 stop 事件**（`chains[kind] = {cap, stop, pause}`）：设备变化只重启那一路（重开捕获+ASR worker），另一路与翻译线程不动，会话/上下文/段落保持连续；重启保留该路暂停状态；
+  - `main` 内 `_watch_default_devices` 守护线程每 2s 轮询，默认输出变了→重开内部音频（`monitor_source` 显式配置的不跟随，以配置为准）；默认输入变了→重开麦克风（`mic_device` 显式配置同理）；无 pactl 的环境自动不跟随；
+  - **坑**：捕获链在 `boot()` 线程里启动，`chains` 一度定义成 boot 局部变量 → 主流程 `finally` NameError（无音频源的早退路径必现）。已提升到 main 作用域（与 captures/pause_events 同级）。冒烟验证：正常启动 + 无源早退 + SIGTERM 三条路径退出干净。
+- **③ 桌面入口**：`.desktop` 的 Exec/Icon 仍指向已删除的 `prototype/` → 重跑 `install-desktop.sh` 重新生成（新路径 `platforms/linux/`）。凡"移动/删除工程目录"后都应重跑该脚本。
+
 ## 9. 风险与备选
 
 | 风险 | 缓解 |

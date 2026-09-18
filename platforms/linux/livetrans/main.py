@@ -31,8 +31,8 @@ from dataclasses import dataclass, field
 from .asr import ASRWorker, SegmentEvent, SenseVoiceASR
 from . import configstore
 from .capture import (AudioCapture, ParecCapture, SourceInfo,
-                      default_monitor_source, find_monitor_device,
-                      friendly_source_name, list_devices)
+                      default_audio_device, default_monitor_source,
+                      find_monitor_device, friendly_source_name, list_devices)
 from .config import AppConfig, DialogConfig, TranslateConfig, load_config
 from .paths import CONFIG_PATH, ensure_data_files
 from .langs import (LANG_CODES, dialog_audio_short, dialog_direction,
@@ -872,6 +872,8 @@ def main(argv=None) -> int:
     seg_q: "queue.Queue[SegmentEvent]" = queue.Queue()
     captures: list = []
     pause_events: dict[str, threading.Event] = {}   # kind -> 置位=该路暂停
+    chains: dict[str, dict] = {}   # kind -> {"cap","stop","pause"}（boot 线程填充，
+                                   #   主流程 finally 据此停各链的 ASR worker）
     config_arg = args.config if Path(args.config).is_file() else None
 
     def _on_pause_toggle(role: str, paused: bool) -> None:
@@ -1005,20 +1007,91 @@ def main(argv=None) -> int:
                 threading.Thread(target=tracker.preload, daemon=True,
                                  name="speaker-preload").start()
 
-            # 音频源：每路独立 捕获线程 + ASR worker（内外部音频可同时翻译）
+            # 音频源：每路独立 捕获线程 + ASR worker（内外部音频可同时翻译）。
+            # 每条链有独立的 stop 事件：设备热切换时只重启那一路，
+            # 另一路与翻译线程不动（会话/上下文/段落保持连续）。
+            # chains 字典在 main 作用域（boot 线程填充，finally 消费）。
             def spawn(source: SourceInfo, capture) -> None:
                 cap_q: "queue.Queue" = queue.Queue()
                 cap = capture(source, cap_q, target_sr=cfg.audio.sample_rate)
                 cap.start()
+                prev = chains.get(source.kind)
                 pause_ev = threading.Event()
+                if prev is not None and prev["pause"].is_set():
+                    pause_ev.set()                 # 重启链保留暂停状态
                 pause_events[source.kind] = pause_ev
-                ASRWorker(source, cap_q, asr, cfg.asr, seg_q, stop,
+                chain_stop = threading.Event()
+                ASRWorker(source, cap_q, asr, cfg.asr, seg_q, chain_stop,
                           on_level=window.set_level,
                           on_partial=_on_partial,
                           pause_event=pause_ev, speaker=tracker).start()
                 captures.append(cap)
+                chains[source.kind] = {"cap": cap, "stop": chain_stop,
+                                       "pause": pause_ev}
                 _log(f"音频源就绪: {source.label}（外部/内部={source.kind}，"
                      f"设备: {cap.device_name}）")
+
+            def _restart_chain(kind: str) -> None:
+                """设备热切换后重开一路捕获（旧流绑着旧设备，只会采到静音）。"""
+                ch = chains.pop(kind, None)
+                if ch is None:
+                    return                          # 该路本来就没在跑
+                ch["stop"].set()
+                ch["cap"].stop()
+                try:
+                    if kind == "mic":
+                        spawn(SourceInfo("mic", "external", "麦克风", "microphone"),
+                              lambda s, q, target_sr: AudioCapture(
+                                  s, cfg.audio.mic_device, q,
+                                  target_sr=target_sr))
+                    else:
+                        mon_src = cfg.audio.monitor_source or \
+                            default_monitor_source()
+                        if not mon_src:
+                            _log("⚠ 默认输出切换后未找到 monitor 源，"
+                                 "内部音频暂不可用")
+                            return
+                        spawn(SourceInfo("monitor", "internal",
+                                         friendly_source_name(mon_src), mon_src),
+                              lambda s, q, target_sr: ParecCapture(
+                                  s, mon_src, q, target_sr))
+                    _log(f"音频源已跟随系统设备切换重开（{kind}）")
+                except Exception as e:  # noqa: BLE001
+                    _log(f"⚠ 重开音频源失败（{kind}）: {type(e).__name__}: {e}")
+
+            def _watch_default_devices() -> None:
+                """跟随系统默认音频设备切换（接耳机/换麦克风无需重启字幕）。
+
+                monitor 源绑定"启动那一刻的默认输出"、麦克风 auto 绑定"打开
+                时的默认输入"——热切换后旧流只采到静音（Windows 侧同类问题
+                见 1d84342）。这里每 2s 轮询 pactl，变了就只重启对应那一路。
+                显式配置了 monitor_source / mic_device 的不跟随（以配置为准）。
+                """
+                last = {"sink": default_audio_device("sink"),
+                        "source": default_audio_device("source")}
+                if last["sink"] is None and last["source"] is None:
+                    return                          # 无 pactl：无法探测，不跟随
+                while not stop.is_set():
+                    time.sleep(2.0)
+                    if stop.is_set():
+                        return
+                    sink = default_audio_device("sink")
+                    if sink and sink != last["sink"]:
+                        last["sink"] = sink
+                        if cfg.audio.monitor_enabled and \
+                                not cfg.audio.monitor_source:
+                            _log(f"系统默认输出已切换 → {sink}，重开内部音频")
+                            _restart_chain("monitor")
+                    src = default_audio_device("source")
+                    if src and src != last["source"]:
+                        last["source"] = src
+                        if cfg.audio.mic_enabled and \
+                                cfg.audio.mic_device is None:
+                            _log(f"系统默认输入已切换 → {src}，重开麦克风")
+                            _restart_chain("mic")
+
+            threading.Thread(target=_watch_default_devices, daemon=True,
+                             name="audio-dev-watch").start()
 
             if cfg.audio.mic_enabled:
                 window.set_status("打开麦克风 ...")
@@ -1144,6 +1217,8 @@ def main(argv=None) -> int:
         window.run()
     finally:
         stop.set()
+        for ch in chains.values():               # 各链独立 stop：让 ASR worker 退出
+            ch["stop"].set()
         for c in captures:
             c.stop()
         # 停止字幕时卸载本地模型（默认关闭：默认保持驻留，下次启动秒级就绪）

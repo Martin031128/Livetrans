@@ -143,6 +143,20 @@ def _default_sink() -> str | None:
         return None
 
 
+def default_audio_device(kind: str) -> str | None:
+    """系统当前默认输出/输入设备名（kind: "sink"=输出 / "source"=输入）。
+
+    供主程序运行期跟随设备热切换（接耳机/换麦克风后无需重启字幕）；
+    无 pactl（非 PulseAudio/PipeWire 环境）返回 None。
+    """
+    try:
+        out = subprocess.run(["pactl", f"get-default-{kind}"], capture_output=True,
+                             text=True, timeout=5).stdout
+        return (out or "").strip() or None
+    except Exception:  # noqa: BLE001 - 无 pactl / 非 PulseAudio 环境
+        return None
+
+
 class ParecCapture:
     """用 parec 子进程捕获一个 PulseAudio monitor 源。
 
