@@ -32,23 +32,47 @@ from livetrans.langs import (DIALOG_AUDIO_LABELS, DIALOG_AUDIO_SHORT,
                              dialog_role_kinds, dialog_role_label,
                              dialog_roles)
 from livetrans.speaker import color_for
+from livetrans.ui.theme import BORDER, INK, INTERNAL, PANEL, PANEL_2, SIGNAL
+from livetrans.ui.widgets import ToolTip   # 悬停提示统一实现（主页同款观感）
 
+# 字幕窗专用色（与控制台刻意不同：窗口底更暗、警示更橙；其余色与 ui.theme 同源）
 BG = "#1e1e2e"
 FG_PENDING = "#6c7086"  # 翻译中占位（暗灰）
 FG_META = "#5b6478"     # 元信息（时间/延迟）
-FG_INTERNAL = "#89b4fa" # 内部音频栏标题（蓝）
+WARN = "#ff9f43"        # 提示/警示（状态栏与面板里的提醒文字）
+FG_INTERNAL = INTERNAL  # 内部音频栏标题（蓝）
 FG_EXTERNAL = "#a6e3a1" # 外部音频栏标题（绿）
 BAR_TRACK = "#2a3142"   # 进度条/电平条底槽
 LEVEL_W = 70            # 栏头电平条宽度（栏窄也不挤：标题会让位裁切）
-INK = "#dce3ee"         # 主文字
-SIGNAL = "#39c5b8"      # 激活态
-PANEL = "#1c2230"       # 弹出面板底色（样式/对话设置）
-WARN = "#ff9f43"        # 提示/警示（状态栏与面板里的提醒文字）
-PANEL_2 = "#262f42"     # 按钮/控件面
-BORDER = "#2c3548"      # 边线
 MAX_ITEMS_PER_PANE = 50     # 保留可回滚阅读的历史条数
 
 DEFAULT_LAYOUT = "dialog"
+
+_UI_FONT: str | None = None
+
+
+def _ui_family() -> str:
+    """中文字体族（懒解析并缓存）：Windows 雅黑优先，取不到回退 Tk 默认。
+
+    字幕窗原文/译文/按钮/提示此前写死 "sans"——Windows 上中文实际落到
+    系统回退（宋体），与控制台（雅黑）观感割裂。字体族列表需要 Tk root
+    就绪才能枚举，故懒解析、不能在模块导入期调用（CHIP_FONT 的教训）。
+    """
+    global _UI_FONT
+    if _UI_FONT is None:
+        fam = ""
+        try:
+            lower = {f.lower(): f for f in font.families()}
+            for want in ("microsoft yahei ui", "microsoft yahei",
+                         "noto sans cjk sc", "noto sans sc",
+                         "wenquanyi micro hei", "wenquanyi zen hei"):
+                if want in lower:
+                    fam = lower[want]
+                    break
+        except tk.TclError:
+            pass
+        _UI_FONT = fam or "sans"
+    return _UI_FONT
 
 STYLE_DEFAULTS = {
     "text_opacity": 1.0,    # 文字不透明度 0.3~1.0（颜色向当前背景混合模拟）
@@ -71,7 +95,7 @@ def is_source_layout(mode: str) -> bool:
     """只看某一路音频的单一界面（外部/内部）。"""
     return mode in ("external", "internal")
 # 按钮尺寸令牌（与控制台一致的两档：顶栏标准 + 条目内小按钮）
-CHIP_FONT = ("sans", 8)     # 条目里的「原文/译文」复制按钮
+CHIP_SIZE = 8               # 条目里的「原文/译文」复制按钮字号（字体走 _ui_family）
 CHIP_PAD = 6
 PENDING = "… 翻译中"
 PULSE = "▌"                 # 脉冲光标（半个方块，字宽稳定不引起重排）
@@ -124,6 +148,7 @@ class _Pane:
         self.align = align                  # 对话模式右栏右对齐
         self.active = True                  # 活跃栏高亮（对话模式）
         self.pending: dict[str, tk.Text] = {}   # 待翻译条目 -> 译文控件（脉冲光标）
+        self.src_refs: dict[str, tk.Text] = {}  # 条目 -> 原文控件（段落原文可增长）
         bg = win.bg()
         frame = tk.Frame(parent, bg=bg)
 
@@ -132,7 +157,7 @@ class _Pane:
         # 标题占剩余宽度、放不下就自动裁切（pack 会撑破栏宽：窄栏时电平条被挤出窗口）
         header.grid_columnconfigure(0, weight=1)
         self.title_lab = tk.Label(header, text=title, bg=bg, fg=color,
-                                  font=("sans", 11, "bold"), anchor="w")
+                                  font=(_ui_family(), 11, "bold"), anchor="w")
         self.title_lab.grid(row=0, column=0, sticky="ew")
         self.level = tk.Canvas(header, width=LEVEL_W, height=8, bg=BAR_TRACK,
                                highlightthickness=0)
@@ -145,10 +170,10 @@ class _Pane:
                                        bg=PANEL_2, fg=color,
                                        activebackground=BORDER,
                                        activeforeground=color, relief="flat",
-                                       bd=0, font=("sans", 9), cursor="hand2",
+                                       bd=0, font=(_ui_family(), 9), cursor="hand2",
                                        takefocus=0)
             self.pause_btn.grid(row=0, column=2, sticky="e", padx=(8, 0))
-            _Tooltip(self.pause_btn,
+            ToolTip(self.pause_btn,
                      "暂停本栏（这个角色）：只停它的翻译与上屏，\n"
                      "音频仍照常提供给另一栏；线下共用麦克风时靠它轮流说话")
 
@@ -301,7 +326,7 @@ class _Pane:
         meta_row = tk.Frame(entry, bg=bg)
         info = tk.Frame(meta_row, bg=bg)
         meta_lab = tk.Label(info, text=self._meta_text(item, item.llm_ms),
-                            bg=bg, fg=FG_META, font=("sans", 8), anchor="w")
+                            bg=bg, fg=FG_META, font=(_ui_family(), 8), anchor="w")
         meta_lab.pack(side="left")
         if item.speaker and item.speaker != self.last_speaker:
             self.last_speaker = item.speaker          # 换人才标注，同人不重复
@@ -321,6 +346,7 @@ class _Pane:
         if item.item_id:
             self.label_refs[item.item_id] = dst_txt
             self.meta_refs[item.item_id] = meta_lab
+            self.src_refs[item.item_id] = src_txt
             if not done:
                 self.pending[item.item_id] = dst_txt   # 脉冲光标 + 等译文
         if anim:                                       # 入场动效：颜色淡入
@@ -334,6 +360,7 @@ class _Pane:
                 self.label_refs.pop(iid, None)
                 self.meta_refs.pop(iid, None)
                 self.pending.pop(iid, None)
+                self.src_refs.pop(iid, None)
             removed.destroy()
             self.src_labels = [l for l in self.src_labels if l.winfo_exists()]
             self._meta_btns = [b for b in self._meta_btns if b.winfo_exists()]
@@ -344,7 +371,7 @@ class _Pane:
     def _speaker_chip(self, parent, name: str) -> tk.Label:
         """说话人色块（S1/S2… 各一色）：只在换人时出现，不污染可复制的正文。"""
         chip = tk.Label(parent, text=name, bg=color_for(name), fg="#0d1420",
-                        font=("sans", 7, "bold"), padx=4, pady=0)
+                        font=(_ui_family(), 7, "bold"), padx=4, pady=0)
         self._spk_chips.append(chip)
         return chip
 
@@ -435,7 +462,8 @@ class _Pane:
 
     def _copy_btn(self, parent, txt: tk.Text, bg: str, label: str) -> tk.Button:
         # 统一小按钮（chip）尺寸：字号 8 + padx 6，与控制台的小按钮观感一致
-        b = tk.Button(parent, text=label, font=CHIP_FONT, bd=0, relief="flat",
+        b = tk.Button(parent, text=label, font=(_ui_family(), CHIP_SIZE),
+                      bd=0, relief="flat",
                       bg=bg, fg=FG_META, activebackground=BORDER,
                       activeforeground=INK, cursor="hand2", takefocus=0,
                       padx=CHIP_PAD, pady=1,
@@ -452,6 +480,14 @@ class _Pane:
         old = btn.cget("text")
         btn.config(text="已复制")
         btn.after(900, lambda: btn.winfo_exists() and btn.config(text=old))
+
+    def update_source(self, item_id: str, text: str, win=None) -> None:
+        """原文原地更新（上下文连续段落：段落内每来一句，原文随增）。"""
+        src = self.src_refs.get(item_id)
+        if src is not None and src.winfo_exists() and win is not None:
+            self._set_text(src, text)
+            if self.follow:
+                self.stick_bottom()                # 原文增高后保持贴底
 
     def update_translation(self, item_id: str, text: str,
                            llm_ms: float | None = None, win=None) -> None:
@@ -555,57 +591,6 @@ class _Pane:
         self.level.coords(self.level_rect, 0, 0, w, 8)
 
 
-class _Tooltip:
-    """极简 Tk 悬停提示：鼠标停留 ~450ms 后在指针旁弹出，移开/点击即消失。"""
-
-    DELAY = 450
-
-    def __init__(self, widget, text: str):
-        self.widget, self.text = widget, text
-        self._job = None
-        self._tip: tk.Toplevel | None = None
-        widget.bind("<Enter>", self._schedule, add="+")
-        widget.bind("<Leave>", self._hide, add="+")
-        widget.bind("<ButtonPress>", self._hide, add="+")
-
-    def _schedule(self, _e=None) -> None:
-        self._hide()
-        try:
-            self._job = self.widget.after(self.DELAY, self._show)
-        except tk.TclError:
-            self._job = None
-
-    def _show(self) -> None:
-        if self._tip is not None or not self.widget.winfo_exists():
-            return
-        try:
-            x = self.widget.winfo_rootx() + 12
-            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
-            tip = tk.Toplevel(self.widget)
-            tip.wm_overrideredirect(True)
-            tip.wm_geometry(f"+{x}+{y}")
-            tk.Label(tip, text=self.text, bg="#1c2230", fg="#dce3ee",
-                     font=("sans", 9), justify="left", padx=8, pady=5,
-                     relief="flat").pack()
-            self._tip = tip
-        except tk.TclError:
-            self._tip = None
-
-    def _hide(self, _e=None) -> None:
-        if self._job:
-            try:
-                self.widget.after_cancel(self._job)
-            except tk.TclError:
-                pass
-            self._job = None
-        if self._tip is not None:
-            try:
-                self._tip.destroy()
-            except tk.TclError:
-                pass
-            self._tip = None
-
-
 class SubtitleWindow:
     """线程安全：工作线程调用 post/update_translation/set_partial/set_level，
     UI 线程轮询消费。暂停/布局/样式经回调交由 main 处理与持久化。"""
@@ -615,6 +600,7 @@ class SubtitleWindow:
                  dialog: dict | None = None, on_dialog_change=None):
         self.q: "queue.Queue[DisplayItem]" = queue.Queue()
         self.uq: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self.sq: "queue.Queue[tuple[str, str]]" = queue.Queue()   # 原文原地更新
         self.lq: "queue.Queue[tuple[str, float]]" = queue.Queue()
         self.pq: "queue.Queue[tuple[str, str]]" = queue.Queue()
         self._status_q: "queue.Queue[str]" = queue.Queue()
@@ -655,11 +641,11 @@ class SubtitleWindow:
             b = tk.Button(topbar, text=label, command=lambda m=mode: self._set_layout(m),
                           bg=BG, fg=FG_PENDING, activebackground=BG,
                           activeforeground=INK, relief="flat", bd=0,
-                          font=("sans", 9), cursor="hand2", takefocus=0,
+                          font=(_ui_family(), 9), cursor="hand2", takefocus=0,
                           padx=6)
             b.pack(side="left")
             self._mode_btns[mode] = b
-            _Tooltip(b, {
+            ToolTip(b, {
                 "dialog": "对话：两条字幕流并排（按角色）——\n"
                           "自己（你）靠右、对方靠左，说话侧高亮；\n"
                           "各自的音频来源与语言在「对话设置」里",
@@ -671,21 +657,21 @@ class SubtitleWindow:
         self.btn_jump = tk.Button(topbar, text="↓ 最新", command=self._jump_to_latest,
                                   bg=BG, fg=FG_PENDING, activebackground=BG,
                                   activeforeground=INK, relief="flat", bd=0,
-                                  font=("sans", 9), cursor="hand2", takefocus=0,
+                                  font=(_ui_family(), 9), cursor="hand2", takefocus=0,
                                   padx=6)
         self.btn_jump.pack(side="left", padx=(8, 0))
-        _Tooltip(self.btn_jump,
+        ToolTip(self.btn_jump,
                  "回到最新字幕并恢复自动跟随\n（上滚查看历史后点这里回来）")
         # 导出：本次会话 -> SRT（双语/仅译文/仅原文）或纯文本
         self.btn_export = tk.Menubutton(topbar, text="导出 ▾", bg=BG,
                                         fg=FG_PENDING, activebackground=BG,
                                         activeforeground=INK, relief="flat",
-                                        bd=0, font=("sans", 9), cursor="hand2",
+                                        bd=0, font=(_ui_family(), 9), cursor="hand2",
                                         takefocus=0, padx=6,
                                         highlightthickness=0)
         menu = tk.Menu(self.btn_export, tearoff=0, bg="#1c2230", fg=INK,
                        activebackground=SIGNAL, activeforeground="#0d1420",
-                       font=("sans", 9), bd=0)
+                       font=(_ui_family(), 9), bd=0)
         for label, mode, as_txt in (("双语字幕 SRT", "bilingual", False),
                                     ("仅译文 SRT", "dst", False),
                                     ("仅原文 SRT", "src", False),
@@ -694,37 +680,40 @@ class SubtitleWindow:
                              command=lambda m=mode, t=as_txt: self._export(m, t))
         self.btn_export["menu"] = menu
         self.btn_export.pack(side="left", padx=(8, 0))
-        _Tooltip(self.btn_export,
+        ToolTip(self.btn_export,
                  "把本次会话导出为字幕文件（时间轴与内容严格对齐）\n"
                  "双语=原文+译文两条；也可只导一侧或纯文本")
         self.btn_top = tk.Button(topbar, text="置顶 ✓", command=self._toggle_topmost,
                                  bg=BG, fg=FG_PENDING, activebackground=BG,
                                  activeforeground=INK, relief="flat", bd=0,
-                                 font=("sans", 9), cursor="hand2", takefocus=0,
+                                 font=(_ui_family(), 9), cursor="hand2", takefocus=0,
                                  padx=6)
         self.btn_top.pack(side="right")
-        _Tooltip(self.btn_top, "是否让字幕窗始终浮在其它窗口之上")
+        ToolTip(self.btn_top, "是否让字幕窗始终浮在其它窗口之上")
         self.btn_style = tk.Button(topbar, text="样式", command=self._open_style_panel,
                                    bg=BG, fg=FG_PENDING, activebackground=BG,
                                    activeforeground=INK, relief="flat", bd=0,
-                                   font=("sans", 9), cursor="hand2",
+                                   font=(_ui_family(), 9), cursor="hand2",
                                    takefocus=0, padx=6)
         self.btn_style.pack(side="right", padx=(0, 8))
-        _Tooltip(self.btn_style,
+        ToolTip(self.btn_style,
                  "字幕样式：文字不透明度 / 字号 / 译文与原文颜色\n（改动即时生效并保存）")
         self.btn_dialog = tk.Button(topbar, text="对话设置",
                                     command=self._open_dialog_panel,
                                     bg=BG, fg=FG_PENDING, activebackground=BG,
                                     activeforeground=INK, relief="flat", bd=0,
-                                    font=("sans", 9), cursor="hand2",
+                                    font=(_ui_family(), 9), cursor="hand2",
                                     takefocus=0, padx=6)
         self.btn_dialog.pack(side="right", padx=(0, 8))
-        _Tooltip(self.btn_dialog,
+        ToolTip(self.btn_dialog,
                  "对话模式：左/右两栏各用哪一路音频（麦克风/系统声音）、\n"
                  "各自译成什么语言；改完立即生效并保存，无需重启")
 
         self.header = tk.Frame(self.root, bg=self.bg())
         self.header.pack(fill="both", expand=True, padx=10, pady=(4, 0))
+        # 行权重：窗格 grid 在 header 第 0 行——没有行权重时窗口拉高，
+        # 行 0 仍按内容高度收缩，画布吃不到空间（放大窗口看不到更多内容）
+        self.header.grid_rowconfigure(0, weight=1)
         for role, color in (("self", FG_EXTERNAL), ("other", FG_INTERNAL)):
             pane = _Pane(self.header, DIALOG_ROLE_LABELS.get(role, role), color,
                          on_pause=self._toggle_pause, win=self)
@@ -734,11 +723,11 @@ class SubtitleWindow:
 
         # 布局占位提示（聚焦某一路但没有角色用它时显示）
         self._layout_hint = tk.Label(
-            self.header, text="", bg=self.bg(), fg=FG_META, font=("sans", 11),
+            self.header, text="", bg=self.bg(), fg=FG_META, font=(_ui_family(), 11),
             justify="center", padx=20, pady=20, wraplength=520)
 
         self.status = tk.Label(self.root, text=status, bg=self.bg(), fg="#6c7086",
-                               font=("sans", 10), anchor="w")
+                               font=(_ui_family(), 10), anchor="w")
         self.status.pack(fill="x", side="bottom", padx=10, pady=(2, 6))
 
         self._set_layout(norm_layout(self.style.get("layout")))
@@ -764,13 +753,13 @@ class SubtitleWindow:
     # ---- 字体 ----
 
     def f_src(self) -> tuple:
-        return ("sans", max(8, round(10 * self.style["scale"])))
+        return (_ui_family(), max(8, round(10 * self.style["scale"])))
 
     def f_dst(self) -> tuple:
-        return ("sans", max(11, round(14 * self.style["scale"])), "bold")
+        return (_ui_family(), max(11, round(14 * self.style["scale"])), "bold")
 
     def f_pending(self) -> tuple:
-        return ("sans", max(9, round(11 * self.style["scale"])))
+        return (_ui_family(), max(9, round(11 * self.style["scale"])))
 
     # ---- 布局（对话 / 外部 / 内部） ----
 
@@ -979,20 +968,20 @@ class SubtitleWindow:
         audio_values = list(DIALOG_AUDIO_LABELS.values())     # 中文标签，不用 external/internal
 
         def head(text: str, row: int) -> int:
-            tk.Label(win, text=text, bg=P, fg=SIGNAL, font=("sans", 10, "bold")
+            tk.Label(win, text=text, bg=P, fg=SIGNAL, font=(_ui_family(), 10, "bold")
                      ).grid(row=row, column=0, columnspan=3, sticky="w",
                             pady=(10 if row else 0, 2))
             return row + 1
 
         def combo(row: int, label: str, values, on_pick, width: int = 18,
                   tip: str = "改动立即生效并保存（无需重启）") -> "ttk.Combobox":
-            tk.Label(win, text=label, bg=P, fg="#dce3ee", font=("sans", 10)
+            tk.Label(win, text=label, bg=P, fg="#dce3ee", font=(_ui_family(), 10)
                      ).grid(row=row, column=0, sticky="w", pady=3)
             cb = ttk.Combobox(win, width=width, state="readonly",
                               values=list(values))
             cb.grid(row=row, column=1, sticky="w", padx=(8, 16), pady=3)
             cb.bind("<<ComboboxSelected>>", lambda _e: on_pick(cb.get()))
-            _Tooltip(cb, tip)
+            ToolTip(cb, tip)
             return cb
 
         def pick_source(role: str, label: str) -> None:
@@ -1010,11 +999,11 @@ class SubtitleWindow:
         chk = tk.Checkbutton(
             win, text="双向同传（两个角色各按自己的方向翻译）", variable=bidir_var,
             bg=P, fg="#dce3ee", selectcolor=PANEL_2, activebackground=P,
-            activeforeground=INK, font=("sans", 10), bd=0, highlightthickness=0,
+            activeforeground=INK, font=(_ui_family(), 10), bd=0, highlightthickness=0,
             anchor="w",
             command=lambda: self._apply_dialog({"bidirectional": bool(bidir_var.get())}))
         chk.grid(row=0, column=0, columnspan=3, sticky="w")
-        _Tooltip(chk, "开启：每个角色按自己的「译成」翻译（例如 你说中文→英文、\n"
+        ToolTip(chk, "开启：每个角色按自己的「译成」翻译（例如 你说中文→英文、\n"
                       "对方说英文→中文）；关闭：两路统一用「翻译」页的单向设置")
 
         r = head("显示位置", 1)
@@ -1028,16 +1017,16 @@ class SubtitleWindow:
         r2 = head("你（自己）", r + 1)
         r3 = head("对方", r2 + 3)
 
-        summary = tk.Label(win, text="", bg=P, fg=INK, font=("sans", 10, "bold"),
+        summary = tk.Label(win, text="", bg=P, fg=INK, font=(_ui_family(), 10, "bold"),
                            justify="left")
         summary.grid(row=r3 + 3, column=0, columnspan=3, sticky="w", pady=(12, 0))
         tk.Label(win, text="两个角色的音频来源相互独立：可以各用一路，也可以都选同一路\n"
                            "（线下两人共用麦克风时，用各栏的「暂停」键轮流说话）。\n"
                            "换来源只换输入：该角色的翻译方向与上下文都不变。",
-                 bg=P, fg=FG_META, font=("sans", 9), justify="left").grid(
+                 bg=P, fg=FG_META, font=(_ui_family(), 9), justify="left").grid(
             row=r3 + 4, column=0, columnspan=3, sticky="w", pady=(6, 0))
         # 同源提示：说明"为什么对话模式两栏都写着系统声音"
-        same_tip = tk.Label(win, text="", bg=P, fg=WARN, font=("sans", 9),
+        same_tip = tk.Label(win, text="", bg=P, fg=WARN, font=(_ui_family(), 9),
                             justify="left", wraplength=460)
         same_tip.grid(row=r3 + 5, column=0, columnspan=3, sticky="w", pady=(6, 0))
         self._dlg_same_tip = same_tip
@@ -1185,7 +1174,7 @@ class SubtitleWindow:
         def section(i: int, title: str) -> int:
             """区块标题 + 分隔线；返回下一可用行。"""
             tk.Label(win, text=title, bg=P, fg=SIGNAL,
-                     font=("sans", 10, "bold")).grid(row=i, column=0,
+                     font=(_ui_family(), 10, "bold")).grid(row=i, column=0,
                                                      columnspan=3, sticky="w",
                                                      pady=(2, 4))
             tk.Frame(win, bg=BORDER, height=1).grid(row=i + 1, column=0,
@@ -1195,7 +1184,7 @@ class SubtitleWindow:
         def slider(i: int, label: str, key: str, lo: float, hi: float,
                    tip: str = "") -> None:
             lab = tk.Label(win, text=label, bg=P, fg="#dce3ee",
-                           font=("sans", 10))
+                           font=(_ui_family(), 10))
             lab.grid(row=i, column=0, sticky="w", pady=5, padx=(0, 10))
             sc = tk.Scale(win, from_=lo, to=hi, resolution=0.05,
                           orient="horizontal", length=170, bg=P,
@@ -1204,21 +1193,21 @@ class SubtitleWindow:
             sc.set(float(self.style[key]))
             sc.grid(row=i, column=1, columnspan=2, sticky="w")
             if tip:
-                _Tooltip(lab, tip)
-                _Tooltip(sc, tip)
+                ToolTip(lab, tip)
+                ToolTip(sc, tip)
 
         def colors(i: int, label: str, key: str, opts: list) -> None:
             tk.Label(win, text=label, bg=P, fg="#dce3ee",
-                     font=("sans", 10)).grid(row=i, column=0, sticky="w",
+                     font=(_ui_family(), 10)).grid(row=i, column=0, sticky="w",
                                              pady=4, padx=(0, 10))
             what = "译文" if key == "dst_color" else "原文"
             for j, (name, hexv) in enumerate(opts):
                 b = tk.Button(win, text=name, width=4, bg=hexv,
                               fg="#0d1420", relief="flat", bd=0, cursor="hand2",
-                              activebackground=hexv, font=("sans", 9),
+                              activebackground=hexv, font=(_ui_family(), 9),
                               command=lambda h=hexv: self.apply_style({key: h}))
                 b.grid(row=i, column=1, sticky="w", padx=(j * 48, 0), pady=2)
-                _Tooltip(b, f"{what}文字颜色：{name}")
+                ToolTip(b, f"{what}文字颜色：{name}")
 
         r = section(0, "文字")
         slider(r, "不透明度", "text_opacity", 0.3, 1.0,
@@ -1233,11 +1222,11 @@ class SubtitleWindow:
         chk = tk.Checkbutton(
             win, text="新字幕淡入 + 翻译中脉冲", variable=anim_var, bg=PANEL,
             fg="#dce3ee", selectcolor=PANEL_2, activebackground=PANEL,
-            activeforeground=INK, font=("sans", 10), bd=0,
+            activeforeground=INK, font=(_ui_family(), 10), bd=0,
             highlightthickness=0, anchor="w",
             command=lambda: self.apply_style({"animate": bool(anim_var.get())}))
         chk.grid(row=r2, column=0, columnspan=3, sticky="w", pady=(0, 4))
-        _Tooltip(chk, "开启：新条目文字淡入（约 200ms），未出译文时显示脉冲光标\n"
+        ToolTip(chk, "开启：新条目文字淡入（约 200ms），未出译文时显示脉冲光标\n"
                       "关闭：字幕直接出现（省一点 CPU）")
 
         win.grid_columnconfigure(1, weight=1)
@@ -1251,6 +1240,10 @@ class SubtitleWindow:
                            llm_ms: float | None = None) -> None:
         """译文推进/完成（配合 translation=None 先上原文）；llm_ms 回填延迟指标。"""
         self.uq.put((item_id, text, llm_ms))
+
+    def update_source(self, item_id: str, text: str) -> None:
+        """原文原地更新（上下文连续段落：段落内每来一句追加到原文）。"""
+        self.sq.put((item_id, text))
 
     def set_partial(self, kind: str, text: str) -> None:
         """更新某栏"识别中"实时行（说话中流式文本）；text 为空则清空。
@@ -1331,6 +1324,19 @@ class SubtitleWindow:
         if followed:
             for pane in self._panes.values():
                 if pane.follow:               # follow 态：增高后仍保持贴底
+                    pane.stick_bottom()
+        src_followed = False
+        try:
+            while True:
+                item_id, text = self.sq.get_nowait()
+                for k, pane in self._panes.items():
+                    pane.update_source(item_id, text, self)
+                src_followed = True
+        except queue.Empty:
+            pass
+        if src_followed:
+            for pane in self._panes.values():
+                if pane.follow:               # 原文增高后仍保持贴底
                     pane.stick_bottom()
         try:
             while True:
