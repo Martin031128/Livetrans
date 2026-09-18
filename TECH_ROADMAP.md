@@ -1454,6 +1454,18 @@ conda 把非 Python 运行库放在 `<env>\Library\bin\`，PyInstaller **不会�
 - 真机验证：① 预置两张常驻后启动 → 日志 `释放显存（启动时清理其它模型）: 已卸载 qwen2.5:0.5b，回收约 0.4GB`，启动后仅剩在用模型；② `unload_on_exit=true` 停止字幕 → `释放显存（退出时释放）: 已卸载 qwen3:4b-instruct，回收约 3.0GB`，/api/ps 清空、显存回到 800MiB；③ `auto_unload_min=1` → 空闲 60 秒后自动 `释放显存（空闲 1 分钟）`；④ 控制台卡片状态/按钮/三项设置持久化。
 - 编译 + 静态未定义名 0 + selfcheck **10 项**（新增 local 项：地址解析/卸载容错/默认手动）。
 
+### 2026-09-18：Windows→Linux 同步（SYNC_TO_LINUX.md A 类全量落地）
+
+- **背景**：仓库已分叉为 `platforms/linux/`（冻结基线）与 `platforms/windows/`（独立演进）。本次把 Windows 侧先做的平台无关改动按 `SYNC_TO_LINUX.md` 的分级与顺序移植回 Linux，6 个提交、每步全量测试绿灯。
+- **① configstore（地基）**：新增 `livetrans/configstore.py`（与 Windows 版一致）。Linux 侧三处"读-改-写"收口：`main._persist_subtitle_style/_persist_dialog`、`overlay.persist_overlay` 改走 `patch_section`（写前重读磁盘基线，跨进程不互踩）；`launcher._apply_and_save` 外挂托管键取磁盘最新 + 整份重写前 `refresh_sections` 拉新 subtitle/dialog 段。回归：`test_configstore.py`。
+- **② 段落模式原料**：`asr.py` 与 Windows 版**逐字节一致**（`SegmentEvent.gap_ms` + 相邻段真实停顿估算）；`translate.py` 增 `SYSTEM_REVISE` 与 `LLMTranslator.revise()`（win32 分支不搬）；`config.py` 增 `contextual/paragraph_gap_ms/revise_depth`，`ASRConfig.silence_ms` 550→400（**selfcheck 断言与 example 同步**，文档预警过的坑）。
+- **③ 段落管线（最大块，整块搬）**：`main.py` 增 `_Para` 状态机/`_join_parts`/`_text_weight` 与 TranslatorWorker 的 `_para_for/_open_para/_close_para/_drain_partials/_partial_translate_task/_live_show/_maybe_revise/_revise_task`；`_translate_task` 段落分支（迟到 partial 不回写已修订句；会话 jsonl 仍按句落盘）；`main()` 的 `_on_partial` 分流（边讲边译）+ 直跑模块时 keys.env 注入兜底。`subtitle.py` **整文件与 Windows 对齐**（`update_source`/sq 队列原文原地增长 + 顺带完成 Tooltip 收口、色值收口、`_ui_family()`、grid 行权重修复）。回归：`test_paragraph.py` 5 项断言全过。
+- **④ 控制台设置**：「翻译」页新增 上下文连续段落开关/分段停顿/修订句数（保存与回填闭环实测）；overlay 段保存先 `**ov_prev` 继承既有键；显存状态行三态文案；`ui/theme.py`/`ui/widgets.py` 与 Windows 对齐（字体栈双平台、`ui_family()` 懒解析、DIM=#8b93a7）。
+- **⑤ 收尾**：六个 ui 文件未用 import 清理；`overlay_card` 缺件提示改 `deps.overlay_fix_hint()`；外启动 tooltip 补模型跟随说明。
+- **不搬（平台专属，有意保留差异）**：`--overlay` 子模式与 `app_command`（打包专属）、monitor 措辞、`resizable(True)`、overlay_card 的 psutil 进程管理（Linux 沿用 pgrep/pkill，psutil 不在 Linux 依赖）、translate/_open_installer 的 win32 分支。
+- **核实后无需搬**：A-5 配色落盘语义——Linux GTK 版外挂 `persist_geom` 本就只写几何/透明度，不存在该缺陷。
+- 全量验证：selfcheck 10 项 + 12 个测试文件（含新增 test_configstore/test_paragraph）全绿；控制台实测三项新设置上屏与保存闭环。
+
 ## 9. 风险与备选
 
 | 风险 | 缓解 |
