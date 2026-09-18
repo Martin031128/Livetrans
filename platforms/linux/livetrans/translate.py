@@ -171,6 +171,18 @@ SYSTEM_PRO = (
     "\n\nGlossary:\n{glossary}"
 )
 
+# 上下文连续段落模式：段落尾部修订（合并最近几句 + 纠正识别错误 + 润色）
+SYSTEM_REVISE = (
+    "You are polishing live-subtitle output. The user gives recent raw "
+    "speech-recognition segments (error-prone, often unpunctuated) together "
+    "with their current translations. Merge ALL given segments into ONE "
+    "coherent passage in {target}:\n"
+    "- Fix likely recognition mistakes using the context.\n"
+    "- Remove duplicates and filler; use natural punctuation and sentence flow.\n"
+    "- Keep the original meaning; do NOT add new information or explanations.\n"
+    "- Output ONLY the corrected merged {target} text."
+)
+
 SUMMARY_SYSTEM = (
     "你是会议/媒体内容分析助手。对给定的双语实时转录做总结，用中文输出 Markdown，包含：\n"
     "## 主题\n## 要点（涉及多个音频来源时请按来源分组）\n## 行动项/待办（如无则省略）"
@@ -377,6 +389,29 @@ class LLMTranslator:
         return out
 
     # ---- 对外 ----
+
+    def revise(self, sources: list[str], current: str, anchor: str = "") -> str:
+        """上下文连续段落：修订段落尾部（合并最近几句 + 纠正识别错误）。
+
+        - sources：参与修订的最近几句**原始识别文本**（按时间顺序）；
+        - current：这几句当前的合并译文（可能是流式/未修订状态）；
+        - anchor：更早的已定稿上下文（供指代与语气衔接，不会被输出重复）。
+        非流式（输出短、整体替换尾部）；失败抛异常由调用方保留现译文。
+        """
+        if not sources:
+            return ""
+        segs = "\n".join(f"- {s}" for s in sources)
+        user = f"Earlier context (already finalized):\n{anchor}\n\n" if anchor else ""
+        user += (f"Recent raw segments:\n{segs}\n\n"
+                 f"Current merged translation:\n{current or '（空）'}\n\n"
+                 "Return the corrected merged translation only.")
+        out = self._chat(SYSTEM_REVISE.format(target=self.cfg.target_lang),
+                         user, 0.2)
+        # 思考模型（<think>…</think>）兜底剥离：_chat 是非流式一次性返回
+        tf = ThinkFilter()
+        visible = tf.feed(out)
+        tail = tf.final()
+        return (visible + tail).strip()
 
     def translate(self, text: str) -> str:
         """一次性翻译（独立场景用）。实时管线请用 translate_stream + 顺序门，

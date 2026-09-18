@@ -12,7 +12,7 @@ try:
     assert len(cfg.providers) == 9, f"providers 数量异常: {len(cfg.providers)}"
     assert cfg.translate.provider == "deepseek"
     assert cfg.asr.max_words_per_segment == 14
-    assert cfg.asr.silence_ms == 550
+    assert cfg.asr.silence_ms == 400
     assert cfg.providers["deepseek"].label == "DeepSeek"
     assert "deepseek-v4-flash" in cfg.providers["deepseek"].models
     ok.append(f"config: 9 个翻译后端加载 OK（含 label/models 元数据）")
@@ -54,7 +54,10 @@ try:
         text = keys_mod.KEYS_PATH.read_text(encoding="utf-8")
         assert "export DEEPSEEK_API_KEY=sk-test" in text
         assert keys_mod.load_any() == {"DEEPSEEK_API_KEY": "sk-test"}
-        assert (os.stat(keys_mod.KEYS_PATH).st_mode & 0o777) == 0o600
+        # 文件权限 600：POSIX 专属；Windows 没有 POSIX 权限位，
+        # os.stat().st_mode 恒为 0o666（与 chmod 无关）→ 仅 Linux 断言
+        if os.name == "posix":
+            assert (os.stat(keys_mod.KEYS_PATH).st_mode & 0o777) == 0o600
 
         # 旧 keys.yaml 兼容读取；保存时迁移并移除旧文件
         keys_mod.KEYS_PATH.unlink()

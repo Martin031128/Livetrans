@@ -62,6 +62,7 @@ class SegmentEvent:
     ts: float
     asr_ms: float = 0.0    # 该段转写耗时（字幕/日志展示延迟用）
     speaker: str = ""      # 声纹说话人标签 S1/S2…（未启用或未判定时为空）
+    gap_ms: float = 0.0    # 距上一句的真实停顿（上下文连续段落的分段依据；首句=0）
 
 
 class VadSegmenter:
@@ -361,6 +362,7 @@ class ASRWorker(threading.Thread):
         self._last_level_t = 0.0
         self._last_partial_t = 0.0
         self._partial_thread: threading.Thread | None = None
+        self._prev_emit: tuple[float, float] | None = None   # (ts, 音频时长ms)
         self.segmenter = VadSegmenter(
             aggressiveness=asr_cfg.vad_aggressiveness,
             min_speech_ms=asr_cfg.min_speech_ms,
@@ -392,13 +394,26 @@ class ASRWorker(threading.Thread):
                     if text:
                         asr_ms = (time.monotonic() - t0) * 1000
                         ts = time.time()
+                        # 距上一句的真实停顿 = 相邻两段完成时刻之差 - 上一段
+                        # 音频时长 + 上一段尾部计入的静音（VAD 在静音达到阈值
+                        # 时切句，尾静音算进了上一段）。供"上下文连续段落"
+                        # 判断是否分段；ASR 耗时误差 ±数百 ms，对 3.5s 阈值无碍
+                        audio_ms = seg.size / 16000.0 * 1000.0
+                        if self._prev_emit is None:
+                            gap_ms = 0.0
+                        else:
+                            pts, pms = self._prev_emit
+                            gap_ms = max(0.0, (ts - pts) * 1000.0 - pms
+                                         + self.asr_cfg.silence_ms)
+                        self._prev_emit = (ts, audio_ms)
                         # 声纹：整段（VAD 切出的完整句子）抽说话人向量并归类，
                         # 单段约 30ms，与识别同线程串行；失败/未启用时为空串
                         speaker = (self.speaker.assign(seg)
                                    if self.speaker is not None else "")
-                        for part in split_by_words(
-                                text, self.asr_cfg.max_words_per_segment):
+                        for j, part in enumerate(split_by_words(
+                                text, self.asr_cfg.max_words_per_segment)):
                             if part:
+                                # 同段拆出的多句属同一次说话：gap=0（同段）
                                 self.out_q.put(SegmentEvent(
                                     source_key=self.source.key,
                                     kind=self.source.kind,
@@ -407,6 +422,7 @@ class ASRWorker(threading.Thread):
                                     text=part, ts=ts,
                                     asr_ms=asr_ms,
                                     speaker=speaker,
+                                    gap_ms=gap_ms if j == 0 else 0.0,
                                 ))
                     if self.on_partial is not None:
                         self.on_partial(self.source.kind, "")   # 段已定稿，清"识别中"

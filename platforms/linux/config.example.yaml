@@ -9,7 +9,7 @@ asr:
   language: auto
   vad_aggressiveness: 3
   min_speech_ms: 200
-  silence_ms: 550
+  silence_ms: 400             # 静音判定句尾；段落模式下修订会合并碎句
   max_segment_sec: 8
   max_words_per_segment: 14
   pre_buffer_ms: 300
@@ -30,6 +30,9 @@ translate:
   glossary_file: glossary.yaml
   temperature: 0.2
   fallback_local: true
+  contextual: true            # 上下文连续段落：字幕按段落呈现（短停顿不分段）
+  paragraph_gap_ms: 3500      # 停顿超过该值才分段（毫秒）
+  revise_depth: 2             # 段落尾部修订覆盖的最近句数（1~3）
 dialog:
   left_role: self
   self_source: external
