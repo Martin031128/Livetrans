@@ -1477,6 +1477,14 @@ conda 把非 Python 运行库放在 `<env>\Library\bin\`，PyInstaller **不会�
   - **坑**：捕获链在 `boot()` 线程里启动，`chains` 一度定义成 boot 局部变量 → 主流程 `finally` NameError（无音频源的早退路径必现）。已提升到 main 作用域（与 captures/pause_events 同级）。冒烟验证：正常启动 + 无源早退 + SIGTERM 三条路径退出干净。
 - **③ 桌面入口**：`.desktop` 的 Exec/Icon 仍指向已删除的 `prototype/` → 重跑 `install-desktop.sh` 重新生成（新路径 `platforms/linux/`）。凡"移动/删除工程目录"后都应重跑该脚本。
 
+### 2026-09-18（三）：分段规则定稿——只看时间间隔，取消句数上限
+
+- **用户实测反馈**："句子还没讲完就分段"。排查：两平台 12 个管线函数逐字节一致，排除移植走样；真因是 **MAX_PARA_SENTS=8 硬上限**——连续说话到第 8 句强制切段（run.log 实证：para-968.610 覆盖到 8 句后立刻另起新段），与时间间隔无关，违背用户规则。
+- **规则定稿（Linux）**：分段**只看时间间隔**——① 定稿句间真实停顿 > paragraph_gap_ms（默认 3.5s，控制台可调）；② 说话中 partial 静默超同一阈值 → 预分段。句数不设上限（长独白修订输入增大是可接受代价，修订频率仍由 revise_depth 控制）。
+- **配套**：`_para_for`/`_drain_partials` 增加分段原因日志（"分段：距上句停顿约 Xs ≥ 阈值"/"预分段：说话停顿 Xs"）——以后"为什么分段"直接查 run.log；新增回归 `test_no_sentence_cap`（10 句短停顿必须仍是 1 个段落）。
+- **确认项（用户问询）**：① 修订功能已实现且在跑（单次会话日志 15 次"段落修订完成"、0 次失败，最多覆盖 8 句）；② 边讲边译 5 词节流已生效（`PARTIAL_WORDS=5`，`test_worker_partial_live_translate` 显式断言"第三条 partial 才跨过 5 词阈值、只翻一次增量"）。
+- **⚠ 平台分叉点**：Windows 版仍有 8 句上限（`MAX_PARA_SENTS`），本次按用户要求只改 Linux；若确认 Windows 侧同步此规则，移植点为 `_para_for` 的条件与常量删除、`test_paragraph` 同步。
+
 ## 9. 风险与备选
 
 | 风险 | 缓解 |

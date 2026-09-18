@@ -250,8 +250,14 @@ def _join_parts(parts: list[str]) -> str:
     return sep.join(p for p in parts if p)
 
 
-MAX_PARA_SENTS = 8      # 段落句数硬上限（防止长独白把修订输入撑爆；超过强制分段）
 PARTIAL_WORDS = 5       # 边讲边译：partial 新增词数达到该值就翻译一次增量
+
+# 分段规则（2026-09-18 用户定稿）：**只看时间间隔**——
+#   ① 定稿句之间的真实停顿 > paragraph_gap_ms（默认 3.5s）→ 分段；
+#   ② 说话中 partial 静默超同一阈值 → 预分段（不等定稿）。
+# 不设句数上限：原 8 句硬上限会在连续说话中途强制切段（"还没讲完就分段"），
+# 违背该规则；代价是长独白的修订输入变大——修订频率仍由 revise_depth 控制，
+# 且字幕句短，输入规模实际可接受。（与 Windows 版此处有意不一致，见开发日志）
 
 
 def _text_weight(s: str) -> int:
@@ -272,7 +278,7 @@ class _Para:
       修订之后的句子仍按句显示，下一次修订再把它们并进去。
     为什么整段重写而不是只重写尾部：尾部区间的切片无法跨"上次修订"边界
     （合并后的文本拆不回句子），整段重写语义简单且上下文最完整；
-    段落长度由 3.5s 停顿 + MAX_PARA_SENTS 双重限定，成本可控。
+    段落长度只由停顿阈值限定（句数不设上限，见模块头分段规则）。
     """
     para_id: str
     ts: float
@@ -496,11 +502,11 @@ class TranslatorWorker(threading.Thread):
         return p
 
     def _para_for(self, ev: SegmentEvent, role: str | None) -> _Para:
-        """取/开该 (音频路, 角色) 的段落：停顿超阈值或段太长则分段。"""
+        """取/开该 (音频路, 角色) 的段落：仅当停顿超阈值才分段（不设句数上限）。"""
         gap_thr = float(getattr(self.translator.cfg, "paragraph_gap_ms", 3500))
         key = (ev.kind, role or "")
         p = self._paras.get(key)
-        if p is not None and ev.gap_ms <= gap_thr and len(p.srcs) < MAX_PARA_SENTS:
+        if p is not None and ev.gap_ms <= gap_thr:
             # 并入当前段落：定稿句替换临时尾句（partial 只到刚才为止）
             p.live_gen += 1                     # 作废在途的 partial 翻译
             p.live_src = p.live_dst = ""
@@ -512,6 +518,8 @@ class TranslatorWorker(threading.Thread):
             self.window.update_source(p.para_id, _para_src(p))
             return p
         if p is not None:                      # 关段：留锚点供下一段衔接
+            _log(f"分段：距上句停顿约 {ev.gap_ms / 1000:.1f}s ≥ 阈值 "
+                 f"{gap_thr / 1000:.1f}s（段落共 {len(p.srcs)} 句）")
             self._close_para(key, p)
         p = self._open_para(ev.kind, role, ev.label, ev.app, ev.ts, ev.text)
         self._paras[key] = p
@@ -535,6 +543,8 @@ class TranslatorWorker(threading.Thread):
                 now = time.monotonic()
                 if p is not None and now - p.last_activity > gap_thr:
                     # 长停顿后重新开口：预分段（定稿句还没来，停顿已可判定）
+                    _log(f"预分段：说话停顿 {now - p.last_activity:.1f}s ≥ "
+                         f"阈值 {gap_thr:.1f}s")
                     self._close_para(key, p)
                     p = None
                 if p is None:

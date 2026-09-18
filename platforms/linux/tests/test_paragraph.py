@@ -19,8 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from livetrans.asr import SegmentEvent  # noqa: E402
 from livetrans.main import (_join_parts, _para_src, _para_text,  # noqa: E402
-                            _Para, MAX_PARA_SENTS, PARTIAL_WORDS,
-                            TranslatorWorker)
+                            _Para, PARTIAL_WORDS, TranslatorWorker)
 
 
 # ---------------- 1) 拼接规则 ----------------
@@ -188,6 +187,46 @@ def test_worker_paragraph_pipeline(tmp: Path):
     print("[PASS] 管线集成：合段/分段/修订/日志按句落盘")
 
 
+def test_no_sentence_cap(tmp: Path):
+    """分段规则（2026-09-18 用户定稿）：只看时间间隔，不设句数上限。
+
+    守的坑：原 8 句硬上限会在连续说话中途强制切段（"还没讲完就分段"）——
+    10 句短停顿连续说话必须仍是同一段落。
+    """
+    win = FakeWin()
+    tr = FakeTranslator()
+    log_path = tmp / "session-nocap.jsonl"
+    stop = threading.Event()
+    seg_q: "queue.Queue[SegmentEvent]" = queue.Queue()
+    w = TranslatorWorker(seg_q, win, tr, log_path, stop)
+    w.start()
+    try:
+        for i in range(10):                    # 10 句、句间停顿均 < 阈值
+            seg_q.put(_ev(f"第{i}句", ts=100.0 + i, gap_ms=800.0))
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            with win._lock:
+                done = (len(win.items) == 1
+                        and any(isinstance(d, str) and d.startswith("R[")
+                                for d in win.dst.values()))
+            if done:
+                break
+            time.sleep(0.05)
+        assert time.monotonic() < deadline, "段落管线未在超时前完成"
+        with win._lock:
+            assert len(win.items) == 1, \
+                f"10 句短停顿应仍是 1 个段落，实际 {len(win.items)} 个"
+            src = win.src[win.items[0].item_id]
+            for i in range(10):
+                assert f"第{i}句" in src, src   # 全部句子都在段内
+        assert len(tr.revise_calls) >= 1, tr.revise_calls
+    finally:
+        stop.set()
+        w.join(timeout=5)
+        assert not w.is_alive(), "worker 未退出"
+    print("[PASS] 分段规则：句数不设上限，只有时间间隔才分段")
+
+
 def test_worker_partial_live_translate(tmp: Path):
     """边讲边译：partial 增量攒够词数即翻、临时尾句显示；定稿句替换不重复。
 
@@ -252,6 +291,8 @@ if __name__ == "__main__":
     test_segment_event_gap_default()
     with tempfile.TemporaryDirectory() as d:
         test_worker_paragraph_pipeline(Path(d))
+    with tempfile.TemporaryDirectory() as d:
+        test_no_sentence_cap(Path(d))
     with tempfile.TemporaryDirectory() as d:
         test_worker_partial_live_translate(Path(d))
     print("ALL PASS")
