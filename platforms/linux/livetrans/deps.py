@@ -9,10 +9,19 @@ from __future__ import annotations
 
 import importlib.util
 import shutil
+import sys
 
 PIP_FIX = "pip install -r requirements.txt"
 APT_FIX = ("sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-pango-1.0 "
            "python3-cairo pulseaudio-utils libportaudio2")
+
+
+def overlay_fix_hint() -> str:
+    """外挂缺件时的修复命令提示（按平台给对的命令，而不是堆栈）。"""
+    if sys.platform == "win32":
+        return PIP_FIX
+    return APT_FIX
+
 
 _PIP_NEEDS = {"numpy": "numpy", "sounddevice": "sounddevice",
               "yaml": "PyYAML", "openai": "openai",

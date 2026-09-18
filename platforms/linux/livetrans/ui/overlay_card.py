@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 import json
-import math
 import os
-import queue
-import shutil
 import subprocess
 import sys
 import threading
-import time
 import urllib.request
-import webbrowser
 from datetime import datetime
 from pathlib import Path
 
@@ -25,7 +20,7 @@ import yaml
 from livetrans.asr import preload_model, sensevoice_ready
 from livetrans.capture import list_monitor_sources
 from livetrans.config import load_config
-from livetrans.deps import APT_FIX, missing_overlay_deps
+from livetrans.deps import missing_overlay_deps, overlay_fix_hint
 from livetrans.keys import (KEYS_PATH, add_history, detect_provider,
                             key_env_overlay, load_any, load_history,
                             mask_key, merged_env, save_keys)
@@ -184,7 +179,9 @@ class OverlayCardMixin:
         self.btn_ov_save.grid(row=6, column=2, sticky="w", pady=(10, 0))
         self.tip(self.btn_overlay,
                  "启动悬浮字幕；可与主程序同时使用，也可以单独用它\n"
-                 "再点一次即停止（也可在字幕面板上点「退出」）")
+                 "再点一次即停止（也可在字幕面板上点「退出」）\n"
+                 "翻译模型跟随首页「翻译后端」的当前选择（启动外挂时读取并保存）；\n"
+                 "外挂运行中改了首页模型，停止再启动才会生效")
         self.tip(self.btn_ov_save, "只保存外挂的外观设置，不启动悬浮字幕")
 
     @staticmethod
@@ -219,7 +216,7 @@ class OverlayCardMixin:
             return
         missing = missing_overlay_deps()          # 依赖自检：给命令而不是堆栈
         if missing:
-            hint = f"缺少: {'、'.join(missing)}\n\n修复：\n{APT_FIX}"
+            hint = f"缺少: {'、'.join(missing)}\n\n修复：\n{overlay_fix_hint()}"
             self.set_status(f"外挂依赖缺失：{'、'.join(missing)}", BAD)
             messagebox.showerror("无法启动字幕外挂（缺少运行组件）", hint)
             return
