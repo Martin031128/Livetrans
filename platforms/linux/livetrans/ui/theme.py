@@ -21,7 +21,7 @@ BORDER = "#2c3548"    # 边线
 
 INK = "#dce3ee"       # 主文字
 
-DIM = "#8b94a7"       # 次级文字
+DIM = "#8b93a7"       # 次级文字（与外挂面板统一）
 
 SIGNAL = "#39c5b8"    # 信号青：操作/就绪/选中
 
@@ -290,10 +290,42 @@ def apply_theme(root, ui_font: str, mono_font: str) -> ttk.Style:
 
 
 def pick_fonts() -> tuple[str, str]:
-    """按可用性挑选界面字体与等宽字体（中文优先）。"""
-    ui = pick_font(["Noto Sans CJK SC", "Noto Sans SC",
+    """按可用性挑选界面字体与等宽字体（中文优先，Windows/Linux 双栈）。
+
+    Windows 候选放最前（雅黑 UI 是 Win8+ 自带）：此前只有 Linux 字体候选，
+    Windows 上必然回退 "sans"→宋体，整个控制台文字发虚显旧（移植简报 3.1-13）。
+    """
+    ui = pick_font(["Microsoft YaHei UI", "Microsoft YaHei",
+                    "Noto Sans CJK SC", "Noto Sans SC",
                     "WenQuanYi Micro Hei", "WenQuanYi Zen Hei",
                     "Droid Sans Fallback"], "sans")
-    mono = pick_font(["DejaVu Sans Mono", "Noto Sans Mono CJK SC",
+    mono = pick_font(["Cascadia Mono", "Consolas",
+                      "DejaVu Sans Mono", "Noto Sans Mono CJK SC",
                       "Liberation Mono"], "monospace")
     return ui, mono
+
+
+_UI_FONT: str | None = None
+
+
+def ui_family() -> str:
+    """中文字体族（懒解析并缓存）：雅黑优先，取不到回退 Tk 默认。
+
+    供字幕窗/气泡等写死 "sans" 的散点收口用——字体族列表需要 Tk root
+    就绪后才能枚举，故懒解析、不能在模块导入期调用。
+    """
+    global _UI_FONT
+    if _UI_FONT is None:
+        fam = ""
+        try:
+            lower = {f.lower(): f for f in tkfont.families()}
+            for want in ("microsoft yahei ui", "microsoft yahei",
+                         "noto sans cjk sc", "noto sans sc",
+                         "wenquanyi micro hei", "wenquanyi zen hei"):
+                if want in lower:
+                    fam = lower[want]
+                    break
+        except tk.TclError:
+            pass
+        _UI_FONT = fam or "sans"
+    return _UI_FONT

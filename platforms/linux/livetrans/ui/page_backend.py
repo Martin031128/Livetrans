@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import json
-import math
 import os
-import queue
-import shutil
 import subprocess
 import sys
 import threading
 import time
 import urllib.request
-import webbrowser
 from datetime import datetime
 from pathlib import Path
 
@@ -241,6 +237,44 @@ class BackendPageMixin:
                  "云端 API 连续失败 2 句后，自动改用本机模型继续翻译（弱网/断网时不中断）\n"
                  "每 60 秒探一次云端，恢复后自动切回；没有本地后端（Ollama）时此项不生效\n"
                  "本地模型冷启约 1-2 分钟，第一句会慢一点")
+
+        # 上下文连续段落（默认开）：短停顿不分段，字幕按段落呈现，
+        # 尾部最近几句被持续修订（合并碎句、纠正识别错误、润色译文）
+        _tr_cfg = self.cfg.get("translate") or {}
+        self.ctx_para_var = tk.BooleanVar(
+            value=bool(_tr_cfg.get("contextual", True)))
+        self.ctx_para_cb = ttk.Checkbutton(
+            tr, text="上下文连续段落", variable=self.ctx_para_var,
+            style="Card.TCheckbutton")
+        self.ctx_para_cb.grid(row=5, column=0, columnspan=2, sticky="w",
+                              pady=(8, 0))
+        self.tip(self.ctx_para_cb,
+                 "开：短停顿不分段，字幕显示为连续段落；每句翻完会用上下文\n"
+                 "把最近几句的识别+译文合并修正（纠错、连贯），显示会轻微改写\n"
+                 "关：一句一段（旧行为，延迟最低）；每句约多一次修订调用")
+        ttk.Label(tr, text="分段停顿", style="Panel.DimSmall.TLabel"
+                  ).grid(row=5, column=2, sticky="w", padx=(14, 0), pady=(8, 0))
+        self.pgap_var = tk.StringVar(value=str(
+            int(_tr_cfg.get("paragraph_gap_ms", 3500)) / 1000))
+        self.pgap_n = ttk.Combobox(tr, width=5, textvariable=self.pgap_var,
+                                   values=["2", "2.5", "3", "3.5", "4", "5", "6"])
+        self.pgap_n.grid(row=5, column=3, sticky="w", pady=(8, 0))
+        ttk.Label(tr, text="秒", style="Panel.DimSmall.TLabel"
+                  ).grid(row=5, column=4, sticky="w", pady=(8, 0))
+        self.tip(self.pgap_n,
+                 "说话停顿超过该秒数才另起一段（上下文连续段落模式下生效）")
+        ttk.Label(tr, text="修订", style="Panel.DimSmall.TLabel"
+                  ).grid(row=5, column=5, sticky="w", padx=(14, 0), pady=(8, 0))
+        self.pdepth_var = tk.StringVar(value=str(
+            int(_tr_cfg.get("revise_depth", 2))))
+        self.pdepth_n = ttk.Combobox(tr, width=3, textvariable=self.pdepth_var,
+                                     values=["1", "2", "3"])
+        self.pdepth_n.grid(row=5, column=6, sticky="w", pady=(8, 0))
+        ttk.Label(tr, text="句", style="Panel.DimSmall.TLabel"
+                  ).grid(row=5, column=7, sticky="w", pady=(8, 0))
+        self.tip(self.pdepth_n,
+                 "每句翻完后，把段落尾部最近几句（识别+译文）交给模型合并修正\n"
+                 "2 = 覆盖最近两句（默认）；越大越连贯但调用越多")
 
         # 卡片：本地模型显存（默认手动：不自动占、也不自动放）
         lm = self._card(page, "本地模型显存（Ollama）")
@@ -761,11 +795,35 @@ class BackendPageMixin:
 
     @staticmethod
     def _local_mem_text() -> str:
-        """显存卡片的状态行：常驻了哪些模型、占多少、何时到期。"""
-        from livetrans.sysmon import ollama_loaded
+        """显存卡片的状态行：服务 / 装载状态三态清晰可辨。
+
+        三态（用户反馈"看不出模型装没装"）：
+        - 服务未运行：连 Ollama 都没起（选本地后端翻译时会自动拉起）
+        - 未装载：服务在，模型不在显存（空闲已自动卸载，首次翻译时冷启）
+        - 装载完毕：模型常驻显存，秒级响应
+        """
+        import json as _json
+        import urllib.request
+
+        from livetrans.sysmon import ollama_loaded, ollama_root
+
+        running = False
+        try:
+            with urllib.request.urlopen(f"{ollama_root()}/api/version",
+                                        timeout=1.5) as r:
+                _json.loads(r.read().decode())
+            running = True
+        except Exception:  # noqa: BLE001 - 探测失败 = 服务未运行
+            pass
+
+        if not running:
+            return ("Ollama 服务未运行（选本地后端翻译时会自动拉起；"
+                    "也可手动运行 ollama serve）")
+
         loaded = ollama_loaded()
         if not loaded:
-            return "当前没有模型常驻显存（未占用显卡）"
+            return ("模型未装载（空闲已释放显存）：首次翻译时自动载入"
+                    "（冷启约 30~40 秒），载入后本行变为「装载完毕」")
         parts = []
         for m in loaded:
             name = m.get("name", "?")
@@ -774,7 +832,8 @@ class BackendPageMixin:
             parts.append(f"{name} {gb:.1f}GB"
                          + (f"（{exp} 前空闲即自动回收）" if exp else ""))
         total = sum(m.get("size_vram", 0) for m in loaded) / 1024 ** 3
-        return f"常驻 {len(loaded)} 个模型 · 共 {total:.1f}GB：" + "；".join(parts)
+        return (f"装载完毕 · 常驻 {len(loaded)} 个模型 · 共 {total:.1f}GB："
+                + "；".join(parts))
 
     def _unload_models(self) -> None:
         """手动"取消挂载"：把 Ollama 常驻模型全部卸载，立刻回收显存。"""

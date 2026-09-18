@@ -4,6 +4,8 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from livetrans.ui.theme import ui_family
+
 # kind -> ttk 样式（样式定义在 theme.apply_theme，尺寸令牌也只有那一处）
 _BTN_STYLE = {
     "primary": "Accent.TButton",     # 主操作（保存并启动 / 发送）
@@ -26,8 +28,9 @@ def button(parent, text: str, command=None, kind: str = "secondary",
 class ToolTip:
     """悬停气泡：把界面上的小字注释收纳到 hover 提示，主界面保持清爽。"""
 
-    def __init__(self, widget, text: str, font=("sans", 9), delay: int = 450):
-        self.w, self.text, self.font, self.delay = widget, text, font, delay
+    def __init__(self, widget, text: str, font=None, delay: int = 450):
+        self.w, self.text, self.delay = widget, text, delay
+        self.font = font or (ui_family(), 9)   # 未指定时用界面中文字体
         self.tip: tk.Toplevel | None = None
         self._job = None
         widget.bind("<Enter>", self._enter, add="+")
@@ -76,9 +79,9 @@ class StatusToast:
     - 鼠标悬停时暂停消失计时，移开后重启。
     """
 
-    def __init__(self, master, font=("sans", 9)):
+    def __init__(self, master, font=None):
         self.master = master
-        self.font = font
+        self.font = font or (ui_family(), 9)   # 未指定时用界面中文字体
         self.frame: tk.Frame | None = None
         self._hide_job: str | None = None
         self._remain_ms = 0
