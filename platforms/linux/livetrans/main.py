@@ -25,6 +25,7 @@ from pathlib import Path
 import yaml
 
 from .asr import ASRWorker, SegmentEvent, SenseVoiceASR
+from . import configstore
 from .capture import (AudioCapture, ParecCapture, SourceInfo,
                       default_monitor_source, find_monitor_device,
                       friendly_source_name, list_devices)
@@ -58,18 +59,9 @@ def _load_subtitle_style(config_path: str | None) -> dict:
 
 
 def _persist_subtitle_style(config_path: str | None, style: dict) -> None:
-    """字幕样式写回 config.yaml 的 subtitle: 段（保留其余内容）。"""
+    """字幕样式写回 config.yaml 的 subtitle: 段（统一走配置写入层）。"""
     try:
-        p = Path(config_path) if config_path else \
-            CONFIG_PATH
-        raw = {}
-        if p.is_file():
-            raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        raw["subtitle"] = style
-        p.write_text(
-            "# LiveTrans 配置（subtitle 段由字幕窗样式面板自动维护）\n"
-            + yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
-            encoding="utf-8")
+        configstore.patch_section(config_path or CONFIG_PATH, "subtitle", style)
     except (OSError, yaml.YAMLError) as e:  # noqa: BLE001
         _log(f"保存字幕样式失败: {e}")
 
@@ -91,18 +83,9 @@ def _load_dialog(config_arg: str | None) -> dict:
 
 
 def _persist_dialog(config_path: str | None, dialog: dict) -> None:
-    """对话模式设置写回 config.yaml 的 dialog: 段（保留其余内容）。"""
+    """对话模式设置写回 config.yaml 的 dialog: 段（统一走配置写入层）。"""
     try:
-        p = Path(config_path) if config_path else \
-            CONFIG_PATH
-        raw = {}
-        if p.is_file():
-            raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        raw["dialog"] = dialog
-        p.write_text(
-            "# LiveTrans 配置（subtitle/dialog 段由字幕窗自动维护）\n"
-            + yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
-            encoding="utf-8")
+        configstore.patch_section(config_path or CONFIG_PATH, "dialog", dialog)
     except (OSError, yaml.YAMLError) as e:  # noqa: BLE001
         _log(f"保存对话模式设置失败: {e}")
 

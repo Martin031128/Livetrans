@@ -45,6 +45,7 @@ from gi.repository import Gdk, GLib, Gtk, Pango, PangoCairo  # noqa: E402
 import yaml  # noqa: E402
 
 from .asr import ASRWorker, SenseVoiceASR  # noqa: E402
+from . import configstore  # noqa: E402
 from .capture import (AudioCapture, ParecCapture, SourceInfo,  # noqa: E402
                       default_monitor_source, find_monitor_device,
                       friendly_source_name)
@@ -83,19 +84,11 @@ def _log(msg: str) -> None:
 
 
 def persist_overlay(cfg_path: Path | None, patch: dict) -> None:
-    """把外挂的几何/透明度写回 config.yaml 的 overlay 段（保留其余内容）。"""
+    """把外挂的几何/透明度写回 config.yaml 的 overlay 段（统一走配置写入层）。"""
     if cfg_path is None:
         return
     try:
-        raw: dict = {}
-        if cfg_path.is_file():
-            raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-        raw.setdefault("overlay", {})
-        raw["overlay"].update(patch)
-        cfg_path.write_text(
-            "# LiveTrans 配置（overlay 段由字幕外挂自动维护）\n"
-            + yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
-            encoding="utf-8")
+        configstore.patch_section(cfg_path, "overlay", patch)
     except (OSError, yaml.YAMLError) as e:  # noqa: BLE001
         _log(f"保存外挂设置失败: {e}")
 

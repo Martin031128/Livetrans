@@ -37,6 +37,7 @@ import sounddevice as sd
 import yaml
 
 from livetrans.capture import list_monitor_sources
+from livetrans import configstore
 from livetrans.config import load_config
 from livetrans.deps import (APT_FIX, PIP_FIX, missing_pip_deps,
                             missing_system_deps)
@@ -324,6 +325,19 @@ class Launcher(KeyUIMixin, BackendPageMixin, AudioPageMixin,
             "mirror": bool(self.ov_mirror_var.get()),
             "monitor": self._monitor_value(),
         }
+        # 外挂托管的键以磁盘最新为准（self.cfg 是控制台启动时的快照，外挂
+        # 运行中拖动/保存的最新值不在里面，否则控制台一保存就冲回旧值）：
+        # 位置/宽度/偏移/配色永远取磁盘；字号与两根透明度双端都可调，
+        # 仅当控制台这边没动过（与启动快照一致）时才取磁盘最新
+        _disk_ov = configstore.read_section(CONFIG_PATH, "overlay")
+        for _k in ("text_color", "bg_color", "pos_x", "pos_y",
+                   "width_ratio", "bottom_offset"):
+            if _disk_ov.get(_k) is not None:
+                self.cfg["overlay"][_k] = _disk_ov[_k]
+        for _k in ("font_size", "opacity", "text_opacity"):
+            if (_disk_ov.get(_k) is not None
+                    and self.cfg["overlay"].get(_k) == ov_prev.get(_k)):
+                self.cfg["overlay"][_k] = _disk_ov[_k]
 
         # 总结/对话 模型选择（provider 存内部名，不存展示 label）
         self.cfg["assistant"] = {
@@ -382,6 +396,10 @@ class Launcher(KeyUIMixin, BackendPageMixin, AudioPageMixin,
 
         try:
             self._save_keys_now()
+            # subtitle/dialog 段归主程序字幕窗维护：整份重写前从磁盘拉新，
+            # 避免用启动快照把它们冲回旧值
+            configstore.refresh_sections(
+                self.cfg, ("subtitle", "dialog"), CONFIG_PATH)
             CONFIG_PATH.write_text(
                 "# 由 launcher.py 生成（完整注释见 config.example.yaml）\n"
                 + yaml.safe_dump(self.cfg, allow_unicode=True, sort_keys=False),
